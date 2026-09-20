@@ -92,6 +92,12 @@ CONTENT
 - An indicator (a bold/blackboard 1, often written 1 with a doubled stroke, as in 1_{x>0}) is \mathbbm{1}, never \mathbb{1}: the blackboard alphabet has no digits and \mathbb{1} comes out as a struck-through turnstile.
 - An upside-down A is \forall. It is very often mistaken for the letter v or V: "Vp∈M", "Vx≠0", "Va>0", "V chart", "Vw" all mean \forall p\in M, \forall x\neq 0, \forall a>0, \forall \text{ chart}, \forall\omega. A backwards E is \exists. Never output a lone v or V where a quantifier is meant.
 
+TABLES - a summary table is where content goes missing
+- Transcribe every column the table has, including a repetitive one (an F(x) column reading "has no closed form" for half the rows is still a column). Count the columns in the header before you start, and give every row that many cells.
+- A cell contains exactly what is written in it, even when the column heading leads you to expect something else. If the M(t) column of one row actually holds a covariance and a correlation, transcribe those - do NOT supply the moment generating function that "should" be there. Writing a formula the page does not contain is the worst thing you can do: it is correct-looking and undetectable.
+- A cell often holds several formulas separated by commas. Read to the right-hand edge of every cell and transcribe all of them, not just the first.
+- Keep the author's subscripts: x_i, x_j stays x_i, x_j and must not be renumbered to x_1, x_2.
+
 FORMATTING - reproduce how the page looks
 - Underlined text -> \underline{...}. Underlined words, terms being defined and headings are common; do not drop underlines.
 - Text visibly centered on the page (titles, cover-page lines) -> \begin{center} ... \end{center}, one handwritten line per line, separated by \\.
