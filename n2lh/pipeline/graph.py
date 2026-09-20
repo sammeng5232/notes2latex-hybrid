@@ -26,6 +26,7 @@ from n2lh.pipeline.assembler import build_document
 from n2lh.pipeline.context import ContextWindow, EnvironmentTracker
 from n2lh.pipeline.autofix import autofix_latex
 from n2lh.pipeline.figures import render_figures
+from n2lh.pipeline.layout import tidy_layout
 from n2lh.pipeline.sanitize import comment_out, sanitize_body
 from n2lh.pipeline.style import bold_labels
 from n2lh.recognition.base import PageImage, Recognizer, TranscribeResult
@@ -471,6 +472,9 @@ class DocumentPipeline:
         latex, bolded = bold_labels(latex)
         if bolded:
             log.debug("page %d: bolded %d label(s)", page.index, bolded)
+        latex, tidied = tidy_layout(latex)
+        if tidied:
+            log.debug("page %d: %s", page.index, "; ".join(tidied))
         if latex != result.latex:
             result = TranscribeResult(latex=latex, engine=result.engine,
                                       confidence=result.confidence, notes=result.notes)

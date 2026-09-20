@@ -10,6 +10,8 @@ _PREAMBLE_TEMPLATE = r"""\documentclass[__CLASSOPTS__]{article}
 \usepackage{amsmath,amssymb,amsthm,mathtools}
 \usepackage{mathrsfs}   % \mathscr
 \usepackage{bm}
+\usepackage{bbm}        % \mathbbm{1}: amssymb has no blackboard digit, and
+                        % \mathbb{1} silently renders as the symbol \nVdash
 \usepackage{cancel}
 \usepackage{xcolor}
 \usepackage{graphicx}   % hand-drawn figures cropped from the page image
@@ -25,6 +27,9 @@ _PREAMBLE_TEMPLATE = r"""\documentclass[__CLASSOPTS__]{article}
 \setlength{\parskip}{0.55em}
 % Fallback so a \figbox the app did not turn into a picture still compiles.
 \newcommand{\figbox}[4]{\par\noindent\fbox{[figure]}\par}
+% Shrink a block to the text width, but only when it is wider: a summary table of
+% distributions ran 9 inches past the margin and simply vanished off the page.
+\newcommand{\fitpage}[1]{\resizebox{\ifdim\width>\linewidth\linewidth\else\width\fi}{!}{#1}}
 \newtheorem{theorem}{Theorem}
 \newtheorem{lemma}{Lemma}
 \newtheorem{definition}{Definition}
@@ -81,8 +86,10 @@ CONTENT
 - Copy the words and formulas exactly as written. Keep the author's abbreviations ("mfd", "Eg.", "Def.", "Thm.", "Pf.", "iff", "s.t.", "w/").
 - TRANSCRIBE, DO NOT NORMALISE. Never replace what is written with the version you know. Keep the author's own letters, parameters and convention even when another is more common, and never convert a formula into an equivalent one. If the page writes the exponential distribution as Exp(theta) with density (1/theta)e^{-x/theta}, mean theta and variance theta^2, write exactly that - NOT Exp(lambda) with mean 1/lambda. If it writes Gamma(alpha, theta) with mean alpha*theta, do not turn it into Gamma(alpha, beta) with mean alpha/beta. The same holds for every other choice on the page: a reciprocal, a sign, an index range, a normalising constant, the side a transpose sits on. Read the symbol that is there and copy it.
 - Do not correct, complete or re-derive anything. If a step looks wrong, unfinished or unconventional, transcribe it as written: these are someone's notes, and a silent "fix" is indistinguishable from a misreading and cannot be caught by compiling.
+- Codes and identifiers - course codes, dates, years, reference numbers - are copied character by character, and every character is counted before you write it. Do not drop or add one to make a more familiar-looking code. A bare vertical stroke inside a code is the digit 1, not a separator: "CUHK/STAT2001A/2324/1" is easily misread as "STAT200A" when the 1 is written as a plain stroke.
 - Inline math in $...$, display math in \[ ... \] or equation*/align*. Start a new paragraph (blank line) for every new item (Def., Eg., Thm., Pf., Rmk.) and every new handwritten paragraph.
 - A handwritten "&" between words means "and": write \& (a bare & breaks LaTeX outside tables and align).
+- An indicator (a bold/blackboard 1, often written 1 with a doubled stroke, as in 1_{x>0}) is \mathbbm{1}, never \mathbb{1}: the blackboard alphabet has no digits and \mathbb{1} comes out as a struck-through turnstile.
 - An upside-down A is \forall. It is very often mistaken for the letter v or V: "Vp∈M", "Vx≠0", "Va>0", "V chart", "Vw" all mean \forall p\in M, \forall x\neq 0, \forall a>0, \forall \text{ chart}, \forall\omega. A backwards E is \exists. Never output a lone v or V where a quantifier is meant.
 
 FORMATTING - reproduce how the page looks
@@ -145,8 +152,8 @@ def transcribe_user_prompt(context_tail: str, open_environments: List[str]) -> s
     return "\n\n".join(parts)
 
 
-PACKAGES = ("amsmath, amssymb, amsthm, mathtools, mathrsfs, bm, cancel, xcolor, graphicx, "
-            "tikz, tikz-cd, pgfplots")
+PACKAGES = ("amsmath, amssymb, amsthm, mathtools, mathrsfs, bm, bbm, cancel, xcolor, "
+            "graphicx, tikz, tikz-cd, pgfplots")
 
 # Plain-language hints for the compile errors seen most in real runs. Handwritten
 # notes use "&" for "and" all the time (16 of 25 first-attempt failures on a
