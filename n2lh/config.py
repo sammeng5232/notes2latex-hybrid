@@ -6,6 +6,8 @@ from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Optional
 
+from n2lh.recognition.prompts import FONT_SIZES, PAPER_SIZES, make_preamble
+
 ENV_PREFIX = "N2LH_"
 
 VALID_ENGINES = ("heuristic", "vlm", "hybrid")
@@ -61,8 +63,13 @@ class Settings:
     # environment-continuity awareness on the first attempt for parallel
     # throughput; failed pages still repair sequentially with real context.
     vlm_parallel_workers: int = 4
-    # Base font size of the generated document (LaTeX article class: 10, 11 or 12 pt).
+    # Page setup of the generated document. Paper and margins matter for notes:
+    # a3paper fits a dense scanned page without shrinking the figures.
     doc_font_pt: int = 11
+    doc_paper: str = "a4paper"
+    doc_margin_in: float = 1.0
+    doc_landscape: bool = False
+    doc_two_column: bool = False
     # Where finished documents are copied, named after the uploaded file. Empty =
     # keep them only in the job folder (they stay downloadable either way).
     output_dir: str = ""
@@ -91,8 +98,12 @@ class Settings:
             problems.append("vlm_retries should be between 0 and 10")
         if self.vlm_thinking not in ("off", "auto", "on"):
             problems.append("vlm_thinking must be one of off, auto, on")
-        if self.doc_font_pt not in (10, 11, 12):
-            problems.append("doc_font_pt must be 10, 11 or 12")
+        if self.doc_font_pt not in FONT_SIZES:
+            problems.append(f"doc_font_pt must be one of {FONT_SIZES}")
+        if self.doc_paper not in PAPER_SIZES:
+            problems.append(f"doc_paper must be one of {PAPER_SIZES}")
+        if not 0.25 <= float(self.doc_margin_in) <= 4:
+            problems.append("doc_margin_in should be between 0.25 and 4 inches")
         if self.output_dir.strip():
             target = Path(self.output_dir).expanduser()
             if not target.is_absolute():
@@ -100,6 +111,11 @@ class Settings:
             elif target.exists() and not target.is_dir():
                 problems.append("output folder is a file, not a folder")
         return problems
+
+    def preamble(self) -> str:
+        """The LaTeX preamble for the configured page setup (one place, two callers)."""
+        return make_preamble(self.doc_font_pt, self.doc_paper, self.doc_margin_in,
+                             self.doc_landscape, self.doc_two_column)
 
     @property
     def vlm_ready(self) -> bool:
@@ -133,6 +149,11 @@ class Settings:
                 elif isinstance(current, int):
                     try:
                         v = int(v)
+                    except (TypeError, ValueError):
+                        continue
+                elif isinstance(current, float):
+                    try:
+                        v = float(v)
                     except (TypeError, ValueError):
                         continue
                 # Allow clearing the API key only by sending a non-empty value.

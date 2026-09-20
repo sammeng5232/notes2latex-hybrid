@@ -5,8 +5,8 @@ from __future__ import annotations
 import re
 from typing import List
 
-_PREAMBLE_TEMPLATE = r"""\documentclass[11pt]{article}
-\usepackage[margin=1in]{geometry}
+_PREAMBLE_TEMPLATE = r"""\documentclass[__CLASSOPTS__]{article}
+\usepackage[__GEOMETRY__]{geometry}
 \usepackage{amsmath,amssymb,amsthm,mathtools}
 \usepackage{mathrsfs}   % \mathscr
 \usepackage{bm}
@@ -34,20 +34,53 @@ _PREAMBLE_TEMPLATE = r"""\documentclass[11pt]{article}
 """
 
 
-def make_preamble(font_pt: int = 11) -> str:
-    """The document preamble at a given base font size (10, 11 or 12 pt)."""
-    if font_pt not in (10, 11, 12):
+# Paper sizes the article class understands, plus the two-column and landscape
+# switches, all chosen in Settings rather than by editing the .tex afterwards.
+PAPER_SIZES = ("a4paper", "a3paper", "a5paper", "b5paper",
+               "letterpaper", "legalpaper", "executivepaper")
+FONT_SIZES = (10, 11, 12)
+
+
+def make_preamble(font_pt: int = 11, paper: str = "a4paper", margin_in: float = 1.0,
+                  landscape: bool = False, two_column: bool = False) -> str:
+    """The document preamble for the chosen page setup.
+
+    Anything invalid falls back to the default rather than producing a preamble
+    that will not compile: these come from settings a user can edit by hand.
+    """
+    if font_pt not in FONT_SIZES:
         font_pt = 11
-    return _PREAMBLE_TEMPLATE.replace("[11pt]", f"[{font_pt}pt]", 1)
+    if paper not in PAPER_SIZES:
+        paper = "a4paper"
+    try:
+        margin = float(margin_in)
+    except (TypeError, ValueError):
+        margin = 1.0
+    margin = min(4.0, max(0.25, margin))
+
+    opts = [f"{font_pt}pt", paper]
+    if landscape:
+        opts.append("landscape")
+    if two_column:
+        opts.append("twocolumn")
+    # geometry needs the paper size too, or it lays out for its own default.
+    geometry = [paper, f"margin={margin:g}in"]
+    if landscape:
+        geometry.append("landscape")
+    return (_PREAMBLE_TEMPLATE
+            .replace("__CLASSOPTS__", ",".join(opts), 1)
+            .replace("__GEOMETRY__", ",".join(geometry), 1))
 
 
-PREAMBLE_TEX = make_preamble(11)
+PREAMBLE_TEX = make_preamble()
 
 TRANSCRIBE_SYSTEM = r"""You transcribe a scanned page of HANDWRITTEN mathematics lecture notes into LaTeX.
 Output ONLY the LaTeX body for this page: no preamble, no \documentclass, no \begin{document}, no commentary, no code fences.
 
 CONTENT
 - Copy the words and formulas exactly as written. Keep the author's abbreviations ("mfd", "Eg.", "Def.", "Thm.", "Pf.", "iff", "s.t.", "w/").
+- TRANSCRIBE, DO NOT NORMALISE. Never replace what is written with the version you know. Keep the author's own letters, parameters and convention even when another is more common, and never convert a formula into an equivalent one. If the page writes the exponential distribution as Exp(theta) with density (1/theta)e^{-x/theta}, mean theta and variance theta^2, write exactly that - NOT Exp(lambda) with mean 1/lambda. If it writes Gamma(alpha, theta) with mean alpha*theta, do not turn it into Gamma(alpha, beta) with mean alpha/beta. The same holds for every other choice on the page: a reciprocal, a sign, an index range, a normalising constant, the side a transpose sits on. Read the symbol that is there and copy it.
+- Do not correct, complete or re-derive anything. If a step looks wrong, unfinished or unconventional, transcribe it as written: these are someone's notes, and a silent "fix" is indistinguishable from a misreading and cannot be caught by compiling.
 - Inline math in $...$, display math in \[ ... \] or equation*/align*. Start a new paragraph (blank line) for every new item (Def., Eg., Thm., Pf., Rmk.) and every new handwritten paragraph.
 - A handwritten "&" between words means "and": write \& (a bare & breaks LaTeX outside tables and align).
 - An upside-down A is \forall. It is very often mistaken for the letter v or V: "Vp∈M", "Vx≠0", "Va>0", "V chart", "Vw" all mean \forall p\in M, \forall x\neq 0, \forall a>0, \forall \text{ chart}, \forall\omega. A backwards E is \exists. Never output a lone v or V where a quantifier is meant.
@@ -88,7 +121,10 @@ FIX_SYSTEM = (
     "body for that page only. Output ONLY LaTeX, no commentary. Keep every "
     "\\includegraphics line and every \\figbox{..}{..}{..}{..} line exactly as it is "
     "(they are pictures cropped from the page), and keep underlines, centering and "
-    "size commands."
+    "size commands. Fix only what the compiler complained about: do not restate the "
+    "mathematics in a more familiar form, do not change the author's symbols or "
+    "parameters (Exp(theta) with mean theta must not become Exp(lambda) with mean "
+    "1/lambda), and do not correct anything you think is wrong."
 )
 
 

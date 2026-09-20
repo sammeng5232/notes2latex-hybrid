@@ -87,14 +87,39 @@
           <label>TrOCR model dir <span class="muted">(fine-tuned image&rarr;LaTeX checkpoint)</span>
             <input name="trocr_model_dir" placeholder="path/to/math2latex-checkpoint">
           </label>
-          <label>Document font size
-            <select name="doc_font_pt">
-              <option value="10">10 pt</option>
-              <option value="11">11 pt (default)</option>
-              <option value="12">12 pt</option>
-            </select>
-            <span class="muted">Base text size of the generated PDF/.tex. Headings and titles that are larger in your handwriting get \Large / \LARGE on top of this.</span>
-          </label>
+          <fieldset class="group">
+            <legend>Page setup <span class="muted">(the generated document's \documentclass and geometry)</span></legend>
+            <div class="grid3">
+              <label>Paper size
+                <select name="doc_paper">
+                  <option value="a4paper">A4 (default)</option>
+                  <option value="a3paper">A3</option>
+                  <option value="a5paper">A5</option>
+                  <option value="b5paper">B5</option>
+                  <option value="letterpaper">US Letter</option>
+                  <option value="legalpaper">US Legal</option>
+                  <option value="executivepaper">US Executive</option>
+                </select>
+              </label>
+              <label>Font size
+                <select name="doc_font_pt">
+                  <option value="10">10 pt</option>
+                  <option value="11">11 pt (default)</option>
+                  <option value="12">12 pt</option>
+                </select>
+              </label>
+              <label>Margin (inches)
+                <input name="doc_margin_in" type="number" min="0.25" max="4" step="0.05">
+              </label>
+            </div>
+            <div class="checkline">
+              <input type="checkbox" name="doc_landscape" id="doc_landscape">
+              <label for="doc_landscape">Landscape</label>
+              <input type="checkbox" name="doc_two_column" id="doc_two_column">
+              <label for="doc_two_column">Two columns</label>
+            </div>
+            <span class="muted">Base text size applies to the body; handwriting that is larger on the page still gets \Large / \LARGE on top of it. A3 with a small margin suits dense pages with many figures.</span>
+          </fieldset>
           <label>Output folder <span class="muted">(optional)</span>
             <span class="row">
               <input name="output_dir" placeholder="e.g. C:\Users\you\Documents\Notes">

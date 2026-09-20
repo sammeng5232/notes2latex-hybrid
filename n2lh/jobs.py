@@ -15,7 +15,6 @@ from n2lh.pipeline.graph import DocumentPipeline
 from n2lh.pipeline.ingest import ingest_files
 from n2lh.recognition.base import PageImage, Recognizer
 from n2lh.recognition.heuristic import HeuristicRecognizer
-from n2lh.recognition.prompts import make_preamble
 from n2lh.recognition.vlm import VLMRecognizer
 from n2lh.store import JobStore
 
@@ -133,7 +132,7 @@ class JobManager:
                                     self.settings.context_lines,
                                     self.settings.vlm_parallel_workers,
                                     cancel_event=cancel,
-                                    preamble=make_preamble(self.settings.doc_font_pt))
+                                    preamble=self.settings.preamble())
         pages = [PageImage(index=i + 1, path=p) for i, p in enumerate(page_paths)]
 
         def on_event(event: dict) -> None:

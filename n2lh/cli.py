@@ -55,8 +55,7 @@ def _convert(args: argparse.Namespace) -> int:
     from n2lh.pipeline.graph import DocumentPipeline
     from n2lh.pipeline.ingest import ingest_files
     from n2lh.recognition.base import PageImage
-    from n2lh.recognition.prompts import make_preamble
-
+    
     settings = load_settings(Path("data"))
     overrides = {
         "engine": args.engine,
@@ -92,7 +91,7 @@ def _convert(args: argparse.Namespace) -> int:
         primary, LatexCompiler(settings.latex_engine, settings.compile_timeout),
         fixer, settings.max_retries, settings.context_lines,
         settings.vlm_parallel_workers,
-        preamble=make_preamble(settings.doc_font_pt),
+        preamble=settings.preamble(),
     )
 
     def on_event(ev: dict) -> None:

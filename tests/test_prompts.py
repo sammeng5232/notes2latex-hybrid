@@ -42,3 +42,27 @@ def test_first_repair_prompt_does_not_escalate_but_repeat_failures_do():
     again = fix_user_prompt("x", ["Misplaced alignment tab character &."], repeats=2)
     assert "SAME error" in again and "previous 2 fix attempt(s)" in again
     assert "[diagram omitted]" in again
+
+# ----------------------------------------------- transcribe, do not normalise
+def test_the_transcribe_prompt_forbids_re_parameterising_the_mathematics():
+    """A real page wrote Exp(theta) with mean theta; the model returned Exp(lambda)
+    with mean 1/lambda, silently converting the notes to the convention it knows.
+    The output looks right and compiles, so only the prompt can prevent it."""
+    from n2lh.recognition.prompts import TRANSCRIBE_SYSTEM
+    body = TRANSCRIBE_SYSTEM.lower()
+    assert "do not normalise" in body
+    assert "exp(theta)" in body and "1/lambda" in body      # the worked example
+    assert "do not correct, complete or re-derive" in body
+
+
+def test_the_repair_prompt_also_forbids_it():
+    """The repair pass sees the page image too and is just as able to 'improve' it."""
+    from n2lh.recognition.prompts import FIX_SYSTEM
+    body = FIX_SYSTEM.lower()
+    assert "fix only what the compiler complained about" in body
+    assert "exp(theta)" in body
+
+
+def test_the_quantifier_glossary_is_still_there():
+    from n2lh.recognition.prompts import TRANSCRIBE_SYSTEM
+    assert "\\forall" in TRANSCRIBE_SYSTEM and "upside-down A" in TRANSCRIBE_SYSTEM

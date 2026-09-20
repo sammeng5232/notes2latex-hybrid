@@ -143,11 +143,10 @@ def test_figbox_pattern_tolerates_spaces():
 
 
 # ------------------------------------------------------------------- preamble
-def test_make_preamble_sets_the_base_font_size():
-    assert "\\documentclass[12pt]{article}" in make_preamble(12)
-    assert "\\documentclass[10pt]{article}" in make_preamble(10)
-    assert "\\documentclass[11pt]{article}" in make_preamble(99)      # unsupported -> default
-    assert PREAMBLE_TEX == make_preamble(11)
+def test_the_preamble_can_carry_the_cropped_figures():
+    """Page size and font size are covered in test_page_setup.py; what matters
+    here is that a page full of \\includegraphics compiles."""
+    assert PREAMBLE_TEX == make_preamble()
     for needed in ("graphicx", "\\graphicspath", "\\figbox", "\\parskip"):
         assert needed in PREAMBLE_TEX
 

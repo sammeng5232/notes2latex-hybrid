@@ -79,6 +79,16 @@ input[type="checkbox"] { display: inline; width: auto; }
 input[type="file"] { padding: 6px; }
 .checkline { display: flex; align-items: center; gap: 8px; }
 .grid3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+fieldset.group {
+  margin: 16px 0;
+  padding: 4px 14px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel2);
+}
+fieldset.group legend { padding: 0 6px; font-size: 0.9rem; color: var(--muted); }
+fieldset.group .checkline { margin-top: 10px; gap: 6px; }
+fieldset.group .checkline label { display: inline; margin: 0 18px 0 0; font-size: 0.9rem; }
 .row { display: flex; gap: 8px; align-items: center; }
 .row input { flex: 1; }
 .row .button { white-space: nowrap; }

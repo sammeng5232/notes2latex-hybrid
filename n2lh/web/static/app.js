@@ -296,10 +296,12 @@ function renderPages(id, job) {
 async function loadSettings() {
   const s = await api("/api/settings");
   const form = $("#settings-form");
-  for (const key of ["engine", "vlm_base_url", "vlm_model", "trocr_model_dir", "dpi", "max_retries", "context_lines", "vlm_timeout", "vlm_stall_timeout", "vlm_retries", "vlm_thinking", "vlm_parallel_workers", "doc_font_pt", "output_dir"]) {
+  for (const key of ["engine", "vlm_base_url", "vlm_model", "trocr_model_dir", "dpi", "max_retries", "context_lines", "vlm_timeout", "vlm_stall_timeout", "vlm_retries", "vlm_thinking", "vlm_parallel_workers", "doc_font_pt", "doc_paper", "doc_margin_in", "output_dir"]) {
     if (form.elements[key]) form.elements[key].value = s[key] ?? "";
   }
   form.elements.escalate_to_vlm.checked = !!s.escalate_to_vlm;
+  form.elements.doc_landscape.checked = !!s.doc_landscape;
+  form.elements.doc_two_column.checked = !!s.doc_two_column;
   form.elements.vlm_use_proxy.checked = !!s.vlm_use_proxy;
   form.elements.vlm_api_key.value = "";
   const keySaved = !!(s.vlm_api_key_set || s.vlm_api_key);
@@ -332,6 +334,10 @@ $("#settings-form").addEventListener("submit", async (ev) => {
     vlm_thinking: form.vlm_thinking.value,
     vlm_parallel_workers: form.vlm_parallel_workers.value,
     doc_font_pt: form.doc_font_pt.value,
+    doc_paper: form.doc_paper.value,
+    doc_margin_in: form.doc_margin_in.value,
+    doc_landscape: form.doc_landscape.checked,
+    doc_two_column: form.doc_two_column.checked,
     output_dir: form.output_dir.value.trim(),
     escalate_to_vlm: form.escalate_to_vlm.checked,
     vlm_use_proxy: form.vlm_use_proxy.checked,
