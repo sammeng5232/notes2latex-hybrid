@@ -1,0 +1,31 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+.venv/
+venv/
+
+# Secrets and local state. The dev data/ holds settings.json (API key), job
+# history and the notes that were converted: never commit it. Anchored to the
+# root, or it would also swallow tests/data/, which holds test fixtures.
+.env
+/data/
+/out/
+
+# PyInstaller intermediates, but the build scripts and the shipped exe are part
+# of the project: build/work/ is generated, build/*.spec and build/*.ps1 are not.
+build/work/
+build/lib/
+build/bdist.*/
+build/icon.ico
+dist/*
+!dist/notes2latex-hybrid.exe
+
+# LaTeX aux files (strict cleanup policy)
+*.aux
+*.log
+*.out
+*.toc
+*.fls
+*.fdb_latexmk
+*.synctex.gz

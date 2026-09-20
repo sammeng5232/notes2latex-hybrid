@@ -1,0 +1,25 @@
+\begin{proof}
+$V w \in \Omega^k(M), \eta \in \Omega^l(M), d(w \wedge \eta) = dw \wedge \eta + (-1)^k w \wedge d\eta, d(dw)=0$.
+
+\textit{Pf.} $V f \in C^\infty(M), d(df)(X,Y) = X df(Y) - Y df(X) - df([X,Y]) = XYf - YXf - [X,Y]f = 0$. $V k>0, w = f dx_1 \wedge \dots \wedge dx_k, dw = df \wedge dx_1 \wedge \dots \wedge dx_k, d(dw) = d(df) \wedge dx_1 \wedge \dots \wedge dx_k + \sum_i (-1)^i df \wedge dx_1 \wedge \dots \wedge d(dx_i) \wedge \dots \wedge dx_k = 0$.
+
+\textit{Def.} $\text{Sys } \varphi: M \xrightarrow{\infty} N$, recall that the push-forward of $X_p \in T_p M$ is $d\varphi_p(X_p) \in T_{\varphi(p)} N$ \& the pull-back of $g \in C^\infty(N) = \Omega^0(N)$ is $f = \varphi^* g = g \circ \varphi \in C^\infty(M) = \Omega^0(M)$. Define the \underline{pull-back} of $w \in \Omega^k(N)$ by $\varphi^* w \in \Omega^k(M), (\varphi^* w)_p(x_1, \dots, x_k) = w_{\varphi(p)}(d\varphi_p(x_1), \dots, d\varphi_p(x_k))$.
+
+\textit{Prop.} (i) $\varphi^*: \Omega^k(N) \to \Omega^k(M)$ linear;
+(ii) $\varphi^*(w \wedge \eta) = \varphi^* w \wedge \varphi^* \eta, \forall w, \eta$;
+(iii) $(\psi \circ \varphi)^* = \varphi^* \circ \psi^*, \forall M \xrightarrow{\varphi} N \xrightarrow{\psi} P$;
+(iv) $\varphi^* dw = d \varphi^* w$.
+
+\textit{Eg.} In local chart, $\varphi: M \to N, (x_1, \dots, x_m) \mapsto (y_1 = \varphi_1(x_1, \dots, x_m), \dots, y_n = \varphi_n(x_1, \dots, x_m))$. $V w = f(y_1, \dots, y_n) dy_1 \wedge \dots \wedge dy_n, \varphi^* w = \varphi^* f \wedge \varphi^*(dy_1) \wedge \dots \wedge \varphi^*(dy_n) = f \circ \varphi \wedge d\varphi^* y_1 \wedge \dots \wedge d\varphi^* y_n$.
+
+\textit{Eg.} $\varphi: \mathbb{R}^2 \to \mathbb{R}^2, (r, \theta) \mapsto (x = r \cos \theta, y = r \sin \theta)$. $w = dx \wedge dy$, $\varphi^* w = \varphi^* dx \wedge \varphi^* dy = d(r \cos \theta) \wedge d(r \sin \theta) = (\cos \theta dr - r \sin \theta d\theta) \wedge (\sin \theta dr + r \cos \theta d\theta) = r dr \wedge d\theta$. In general, for $n$-mfd $M, N$, $\varphi^*(f dy_1 \wedge \dots \wedge dy_n) = \varphi^* f \det\left(\frac{\partial \varphi_i}{\partial x_j}\right) dx_1 \wedge \dots \wedge dx_n$.
+
+\underline{Orientation}
+
+\textit{Def.} $M^n C^\infty$ mfd. Two charts $(U_\alpha, \chi_\alpha, \varphi_\alpha), (U_\beta, \chi_\beta, \varphi_\beta)$ are \underline{orientation compatible} if $\det(d\varphi_{\alpha\beta}) > 0 \forall x \in \chi_\alpha(U_\alpha \cap U_\beta)$. An \underline{orientation} of $M$ is an atlas $\mathcal{A} = \{(U_\alpha, \chi_\alpha, \varphi_\alpha)\}$ w/ pairwise orientation compatibility. $M$ is \underline{orientable} if $\exists$ orientation.
+
+\textit{Thm.} Orientable $\Leftrightarrow \exists$ nowhere vanishing $w \in \Omega^n(M)$.
+
+\begin{proof}
+Sps $\exists$ nowhere vanishing $w \in \Omega^n(M)$. Then $\forall$ chart $(U_\alpha, \chi_\alpha, x_1, \dots, x_n), \exists f, w = f dx_{\alpha_1} \wedge \dots \wedge dx_{\alpha_n}$. Either $f > 0$ everywhere or $f < 0$ everywhere. WLOG sps $f > 0$. Consider another chart $(U_\beta, \chi_\beta, x_{\beta_1}, \dots, x_{\beta_n}), \exists g, w = g dx_{\beta_1} \wedge \dots \wedge dx_{\beta_n}$. WLOG sps $g > 0$. If $U_\alpha \cap U_\beta \neq \emptyset$, then $f dx_{\alpha_1} \wedge \dots \wedge dx_{\alpha_n} = g dx_{\beta_1} \wedge \dots \wedge dx_{\beta_n} = g \det(d\varphi_{\alpha\beta}) dx_{\alpha_1} \wedge \dots \wedge dx_{\alpha_n} \Rightarrow f = g \det(d\varphi_{\alpha\beta}) \Rightarrow \det(d\varphi_{\alpha\beta}) > 0$. Conversely, sps $\exists$ orientation $\mathcal{A}$. Then $\forall U_\alpha$, let $w_\alpha = dx_{\alpha_1} \wedge \dots \wedge dx_{\alpha_n}$. Pick a p.u. $\{\rho_\alpha\}$ wrt $\{U_\alpha\}$. Define $w = \sum_\alpha \rho_\alpha w_\alpha$. Since $\det(d\varphi_{\alpha\beta}) > 0$, $w$ nowhere vanishing.
+\end{proof}

@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>notes2latex-hybrid</title>
+  <link rel="icon" href="favicon.ico">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <span class="logo">n2lh</span>
+      <span class="tagline">handwritten notes &rarr; compiled LaTeX &middot; offline-first &middot; compiler-verified</span>
+    </div>
+    <nav>
+      <a href="#/" data-nav="home">Convert</a>
+      <a href="#/jobs" data-nav="jobs">Jobs</a>
+      <a href="#/settings" data-nav="settings">Settings</a>
+    </nav>
+  </header>
+
+  <main id="main">
+    <section id="view-home" class="view">
+      <div class="card">
+        <h2>Upload notes</h2>
+        <p class="muted">PDF or images (PNG/JPG/WEBP). Pages are transcribed, compiled, and auto-repaired page by page.</p>
+        <form id="upload-form">
+          <input type="file" id="file-input" multiple accept=".pdf,.png,.jpg,.jpeg,.webp,.bmp,.tif,.tiff">
+          <button type="submit" id="upload-btn" class="primary">Convert</button>
+        </form>
+        <div id="upload-status" class="status"></div>
+      </div>
+      <div class="card" id="engine-card">
+        <h2>Active engine</h2>
+        <div id="preflight-warning" class="warn-banner hidden">
+          No LaTeX toolchain found (latexmk/pdflatex). Install MiKTeX or TeX Live,
+          then restart the app &mdash; compilation verification is disabled until then.
+        </div>
+        <div id="engine-summary" class="engine-summary"></div>
+      </div>
+    </section>
+
+    <section id="view-jobs" class="view hidden">
+      <h2>Jobs</h2>
+      <div id="jobs-list"></div>
+    </section>
+
+    <section id="view-job" class="view hidden">
+      <div class="job-header">
+        <a href="#/jobs">&larr; all jobs</a>
+        <h2 id="job-title"></h2>
+        <div id="job-badges"></div>
+        <button id="cancel-btn" type="button" class="hidden">Cancel job</button>
+        <div class="downloads">
+          <a id="dl-tex" class="button" href="#" download>Download .tex</a>
+          <a id="dl-pdf" class="button" href="#" download>Download .pdf</a>
+          <button id="save-btn" type="button" class="button">Save to folder...</button>
+        </div>
+        <div id="save-status" class="status"></div>
+      </div>
+      <div id="job-progress"></div>
+      <div id="job-pages"></div>
+    </section>
+
+    <section id="view-settings" class="view hidden">
+      <div class="card">
+        <h2>Settings</h2>
+        <form id="settings-form">
+          <label>Engine
+            <select name="engine">
+              <option value="hybrid">hybrid (local primary, VLM repairs)</option>
+              <option value="heuristic">heuristic (fully offline structure skeleton)</option>
+              <option value="vlm">vlm (VLM does everything)</option>
+            </select>
+          </label>
+          <label>VLM base URL <span class="muted">(OpenAI-compatible; Ollama: http://localhost:11434/v1, LM Studio: http://localhost:1234/v1, OpenRouter: https://openrouter.ai/api/v1)</span>
+            <input name="vlm_base_url" placeholder="http://localhost:11434/v1">
+          </label>
+          <label>VLM model
+            <input name="vlm_model" placeholder="qwen/qwen3-vl-30b-a3b-thinking">
+          </label>
+          <label>VLM API key <span class="muted">(leave blank to keep; not needed for local endpoints)</span>
+            <input name="vlm_api_key" type="password" placeholder="">
+            <span id="key-status" class="muted"></span>
+          </label>
+          <label>TrOCR model dir <span class="muted">(fine-tuned image&rarr;LaTeX checkpoint)</span>
+            <input name="trocr_model_dir" placeholder="path/to/math2latex-checkpoint">
+          </label>
+          <label>Document font size
+            <select name="doc_font_pt">
+              <option value="10">10 pt</option>
+              <option value="11">11 pt (default)</option>
+              <option value="12">12 pt</option>
+            </select>
+            <span class="muted">Base text size of the generated PDF/.tex. Headings and titles that are larger in your handwriting get \Large / \LARGE on top of this.</span>
+          </label>
+          <label>Output folder <span class="muted">(optional)</span>
+            <span class="row">
+              <input name="output_dir" placeholder="e.g. C:\Users\you\Documents\Notes">
+              <button id="browse-output" type="button" class="button">Browse...</button>
+            </span>
+            <span class="muted">Every finished document is also copied here, named after the file you uploaded, with its <code>figures/</code> folder. Leave empty to keep results in the app only.</span>
+          </label>
+          <div class="grid3">
+            <label>DPI <input name="dpi" type="number" min="50" max="1200"></label>
+            <label>Max retries <input name="max_retries" type="number" min="0" max="10"></label>
+            <label>Context lines <input name="context_lines" type="number" min="0" max="400"></label>
+          </div>
+          <label>VLM request cap (seconds) <span class="muted">(hard wall-clock limit for ONE request; a slower request is aborted and retried)</span>
+            <input name="vlm_timeout" type="number" min="30" max="3600">
+          </label>
+          <label>Model reasoning ("thinking")
+            <select name="vlm_thinking">
+              <option value="off">off &mdash; fastest, no reasoning loops (recommended)</option>
+              <option value="auto">auto &mdash; provider default; a stalled attempt is retried with it off</option>
+              <option value="on">on &mdash; leave it to the provider</option>
+            </select>
+            <span class="muted">Turning it off sends <code>chat_template_kwargs.enable_thinking=false</code> (vLLM/Qwen); a provider that rejects the field is retried without it. On the CUHK endpoint it was 4&ndash;10&times; faster with equal-or-better transcripts, and some pages otherwise reasoned for 10+ minutes without ever answering.</span>
+          </label>
+          <div class="grid3">
+            <label>Stall timeout (s) <span class="muted">(abort &amp; retry if the model sends no output for this long; keep-alive pings don't count. Healthy pages start within seconds &mdash; raise it only for a provider that hides its reasoning until it is done)</span>
+              <input name="vlm_stall_timeout" type="number" min="10" max="1800">
+            </label>
+            <label>Retries per request <span class="muted">(fresh connection each time, before a page is marked failed)</span>
+              <input name="vlm_retries" type="number" min="0" max="10">
+            </label>
+          </div>
+          <label>Parallel transcription workers <span class="muted">(fetches this many pages' first-attempt VLM transcription concurrently instead of one page at a time &mdash; the VLM round-trip, not compiling, is the slow part, so this is the main lever for wall-clock time on multi-page documents. 1 = fully sequential with full cross-page notation/environment continuity; higher values trade a little of that continuity on the first attempt for much faster throughput &mdash; failed pages still repair sequentially with real context)</span>
+            <input name="vlm_parallel_workers" type="number" min="1" max="16">
+          </label>
+          <label class="checkline">
+            <input name="escalate_to_vlm" type="checkbox"> Escalate failing pages to VLM (hybrid)
+          </label>
+          <label class="checkline">
+            <input name="vlm_use_proxy" type="checkbox"> Route VLM calls through the system proxy
+            <span class="muted">(leave off unless a direct connection is blocked)</span>
+          </label>
+          <button type="submit" class="primary">Save settings</button>
+          <span id="settings-status" class="status"></span>
+        </form>
+      </div>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

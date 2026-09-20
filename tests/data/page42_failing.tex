@@ -1,0 +1,37 @@
+Thm. $f, g: M \to N$ properly homotopic $\Rightarrow \deg f = \deg g$.
+
+Pf. $\exists F: M \times I \to N$, $F(\cdot, 0) = f$, $F(\cdot, 1) = g$. Since $\deg F(\cdot, t)$ is cont, it is const.
+
+Thm (Hopf degree thm). $f, g: M^n \to S^n$ homotopic $\Leftrightarrow \deg f = \deg g$.
+
+Thm. $M$ $n$-dim mfd w/ bdry, $X$ cpt $(n-1)$-dim mfd, $f: \partial M \xrightarrow{i} X$. If $f$ extends to $g: M \xrightarrow{i} X$, then $\deg f = 0$.
+
+Pf. Sps $\omega \in \mathcal{D}^{n-1}(X)$, $\int_X \omega = 1$, $\int_M f^*\omega = \int_M g^*\omega = \int_M dg^*\omega = \int_M g^* d\omega = 0$ since $d\omega \in \mathcal{D}^n(X) = 0$.
+
+Sps $M^n$ cnted oriented mfd, we have $\Lambda: H^k(M) \times H_c^{n-k}(M) \to H_c^{n-k}(M)$, $([\omega], [\eta]) \mapsto [\omega \wedge \eta]$, $\int_M: H_c^n(M) \cong \mathbb{R}$, $[\omega] \mapsto \int_M \omega$. Define $P_M^k: H^k(M) \times H_c^{n-k}(M) \to \mathbb{R}$, $P_M^k([\omega], [\eta]) = \int_M \omega \wedge \eta$. This induces the Poincaré duality operator: $P_M^k: H^k(M) \to (H_c^{n-k}(M))^* = \text{Hom}(H_c^{n-k}(M), \mathbb{R})$, $[\omega] \mapsto (\eta \mapsto \int_M \omega \wedge \eta)$.
+
+Lem (Five lem). If the two rows in
+$$
+\begin{array}{ccccccc}
+V_1 & \xrightarrow{\alpha_1} & V_2 & \xrightarrow{\alpha_2} & V_3 & \xrightarrow{\alpha_3} & V_4 & \xrightarrow{\alpha_4} & V_5 \\
+\gamma_1 \downarrow & & \gamma_2 \downarrow & & \gamma_3 \downarrow & & \gamma_4 \downarrow & & \gamma_5 \downarrow \\
+W_1 & \xrightarrow{\beta_1} & W_2 & \xrightarrow{\beta_2} & W_3 & \xrightarrow{\beta_3} & W_4 & \xrightarrow{\beta_4} & W_5
+\end{array}
+$$
+are exact, and $\gamma_1, \gamma_2, \gamma_4, \gamma_5$ are isomorph, then so is $\gamma_3$.
+
+Thm (Poincaré duality). $P_M^k$ linear isomorphism from $H^k(M)$ to $(H_c^{n-k}(M))^*$. Equivalently, $P_M^k$ is a non-degenerate pairing.
+
+Pf. Induct on \# charts in good cover. We have the MV seq
+$$
+\begin{array}{ccccccc}
+H^{k-1}(U) \oplus H^{k-1}(V) & \to & H^{k-1}(U \cap V) & \to & H^k(M) & \to & H^k(U) \oplus H^k(V) & \to & H^k(U \cap V) \\
+P_U^{k-1} \oplus P_V^{k-1} \downarrow & & P_{U \cap V}^{k-1} \downarrow & & P_M^k \downarrow & & P_U^k \oplus P_V^k \downarrow & & P_{U \cap V}^k \downarrow \\
+H_c^{n-k+1}(U)^* \oplus H_c^{n-k+1}(V)^* & \to & H_c^{n-k+1}(U \cap V)^* & \to & H_c^{n-k}(M)^* & \to & H_c^{n-k}(U)^* \oplus H_c^{n-k}(V)^* & \to & H_c^{n-k}(U \cap V)^*
+\end{array}
+$$
+Now apply the five lemma.
+
+Eg. $H_c^k(\mathbb{R}^n) = \delta_{kn} \mathbb{R}$, $H^k(\mathbb{R}^n) = \delta_{k0} \mathbb{R}$. $H^k(S^n) = H_c^k(S^n) = (\delta_{k0} + \delta_{kn}) \mathbb{R}$. $\forall$ cpt cnted mfd $M^n$, $H^0(M) = H_c^0(M) = \mathbb{R}$, $H^n(M) = H_c^n(M) = \mathbb{R}$.
+
+Cor. $\forall$ non-cpt cnted mfd $M^n$, $H^n(M) \cong H_c^n(M) = 0$, $H_c^{k+l}(M \times \mathbb{R}^l) \cong H^{n-k}(M \times \mathbb{R}^l)^* = H^{n-k}(M)^* \cong H_c^k(M)$.

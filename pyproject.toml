@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "notes2latex-hybrid"
+version = "0.1.0"
+description = "Handwritten notes to compiled LaTeX. Offline-first (local/TrOCR engines) with optional VLM escalation and a compiler-verified generate-compile-fix loop. Combines ideas from wz-ml/Math2LaTeX and advaypakhale/notes2latex."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "notes2latex-hybrid contributors" }]
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn>=0.27",
+    "python-multipart>=0.0.9",
+    "pillow>=10.0",
+    "numpy>=1.24",
+    "httpx>=0.26",
+]
+
+[project.optional-dependencies]
+pdf = ["pypdfium2>=4.0"]
+trocr = ["torch>=2.1", "transformers>=4.38", "sentencepiece"]
+gui = ["pywebview>=5.0", "pystray>=0.19"]
+build = ["pyinstaller>=6.6", "pywebview>=5.0", "pystray>=0.19"]
+dev = ["pytest>=8.0", "pytest-timeout>=2.2"]
+
+[project.scripts]
+n2lh = "n2lh.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["n2lh*"]
+
+[tool.setuptools.package-data]
+n2lh = ["web/static/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
