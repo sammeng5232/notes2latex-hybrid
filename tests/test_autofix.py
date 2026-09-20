@@ -194,3 +194,41 @@ def test_page_with_a_raw_unicode_symbol_and_a_bare_hash_compiles(tmp_path):
     fixed, _ = fix(faulty)
     result = comp.compile(build_document(fixed), tmp_path / "after")
     assert result.ok, result.errors
+
+# ------------------------------------------- sub/superscripts in text mode
+def test_a_superscript_in_text_mode_is_put_into_math():
+    r"""Real page: \textbf{定理 6.6 (L^p 完备性)} -> Missing $ inserted."""
+    out, changes = fix(r"\textbf{Thm 6.6 (L^p completeness)} holds.")
+    assert out == r"\textbf{Thm 6.6 ($L^p$ completeness)} holds."
+    assert changes == ["put 1 text-mode sub/superscript(s) into math"]
+
+
+def test_a_subscript_in_text_mode_too():
+    assert fix("the sequence x_n converges")[0] == "the sequence $x_n$ converges"
+
+
+def test_a_braced_operand_is_taken_whole():
+    assert fix("norm L^{p+1} here")[0] == "norm $L^{p+1}$ here"
+
+
+def test_a_macro_operand_is_taken_whole():
+    assert fix(r"see \alpha_1 there")[0] == r"see $\alpha_1$ there"
+
+
+def test_the_chinese_page_that_failed_after_the_engine_switch():
+    r"""Once XeLaTeX could draw the characters, this was all that still broke."""
+    src = r"\textbf{定理 6.6 (L^p 完备性)} $\|f\|_p$ 为 Banach 空间。"
+    out, changes = fix(src)
+    assert r"($L^p$ 完备性)" in out
+    assert changes == ["put 1 text-mode sub/superscript(s) into math"]
+
+
+@pytest.mark.parametrize("src", [
+    "$L^p$ is complete",
+    r"\[ x_n \to x \]",
+    r"\begin{align*} a^2 &= b \end{align*}",
+    r"a \^{} b",                      # an escaped caret is a real character
+    r"file\_name in prose",           # an escaped underscore likewise
+])
+def test_scripts_already_in_math_or_escaped_are_untouched(src):
+    assert fix(src) == (src, [])

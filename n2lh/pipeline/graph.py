@@ -27,6 +27,7 @@ from n2lh.compiler.latex import CompileResult, LatexCompiler
 from n2lh.pipeline.assembler import build_document
 from n2lh.pipeline.context import ContextWindow, EnvironmentTracker
 from n2lh.pipeline.autofix import autofix_latex
+from n2lh.pipeline.cjk import add_cjk, engine_for, has_cjk
 from n2lh.pipeline.figures import render_figures
 from n2lh.pipeline.layout import tidy_layout
 from n2lh.pipeline.sanitize import comment_out, sanitize_body
@@ -131,6 +132,7 @@ class DocumentPipeline:
         self.preamble = preamble or PREAMBLE_TEX
         self._figures_dir: Optional[Path] = None   # set per run(): <outdir>/figures
         self._tables_read: set = set()   # a page's table is re-read at most once
+        self._cjk = False               # switched on by the first page of CJK
         self.compiler = compiler
         self.fixer = fixer          # engine used for log-guided repair passes
         self.max_retries = max(1, max_retries + 1)  # total attempts per page
@@ -473,6 +475,7 @@ class DocumentPipeline:
         if "\\figbox" in latex and self._figures_dir is not None:
             latex = render_figures(latex, page.path, self._figures_dir, page.index,
                                    locator=lambda: self._locate(page))
+        self._use_cjk_if_needed(latex)
         latex = self._reread_table(page, latex)
         latex, bolded = bold_labels(latex)
         if bolded:
@@ -484,6 +487,22 @@ class DocumentPipeline:
             result = TranscribeResult(latex=latex, engine=result.engine,
                                       confidence=result.confidence, notes=result.notes)
         return result
+
+    def _use_cjk_if_needed(self, latex: str) -> None:
+        """Move the whole job to XeLaTeX once any page turns out to be CJK.
+
+        pdflatex cannot draw a Chinese character, so a page of Chinese notes
+        fails every repair attempt for a reason no repair can address; see
+        n2lh/pipeline/cjk.py. Switching is idempotent and one-way.
+        """
+        if self._cjk or not has_cjk(latex):
+            return
+        self._cjk = True
+        self.preamble = add_cjk(self.preamble)
+        engine = engine_for(getattr(self.compiler, "engine", "pdflatex"))
+        if getattr(self.compiler, "engine", None) != engine:
+            self.compiler.engine = engine
+        log.info("CJK detected: compiling with %s and ctex", engine)
 
     def _reread_table(self, page: PageImage, latex: str) -> str:
         """Read a ruled table again from a crop of it (best-effort).

@@ -11,7 +11,7 @@ hiddenimports = [
     "n2lh", "n2lh.api", "n2lh.cli", "n2lh.config", "n2lh.export", "n2lh.gui",
     "n2lh.jobs", "n2lh.launcher", "n2lh.main", "n2lh.store",
     "n2lh.compiler.latex",
-    "n2lh.pipeline.assembler", "n2lh.pipeline.autofix", "n2lh.pipeline.context",
+    "n2lh.pipeline.assembler", "n2lh.pipeline.autofix", "n2lh.pipeline.cjk", "n2lh.pipeline.context",
     "n2lh.pipeline.figures", "n2lh.pipeline.graph", "n2lh.pipeline.ingest",
     "n2lh.pipeline.layout", "n2lh.pipeline.sanitize", "n2lh.pipeline.segment",
     "n2lh.pipeline.style", "n2lh.pipeline.tables",

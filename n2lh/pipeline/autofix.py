@@ -105,7 +105,7 @@ _MATH_ENVS = {
 _TOKEN = re.compile(
     r"(?P<comment>%[^\n]*)"
     r"|(?P<dbs>\\\\)"                               # \\ (so that \\[2pt] is not \[ )
-    r"|(?P<esc>\\[&%$#_{}])"                        # escaped specials
+    r"|(?P<esc>\\[&%$#_{}^~])"                      # escaped specials
     r"|(?P<begin>\\begin\{(?P<bname>[A-Za-z*]+)\})"
     r"|(?P<end>\\end\{(?P<ename>[A-Za-z*]+)\})"
     r"|(?P<dopen>\\\[)|(?P<dclose>\\\])"
@@ -113,7 +113,13 @@ _TOKEN = re.compile(
     r"|(?P<dd>\$\$)|(?P<d>\$)"
     r"|(?P<amp>&)"
     r"|(?P<hash>#)"
+    r"|(?P<sup>[\^_])"
 )
+# A sub/superscript in text mode ("L^p completeness" inside \textbf) is
+# "Missing $ inserted". The operand on either side is a letter, a digit, a
+# braced group or a control sequence, so the whole thing can be put into math.
+_OPERAND_BEFORE = re.compile(r"(?:\\[A-Za-z]+|\{[^{}]*\}|[A-Za-z0-9])$")
+_OPERAND_AFTER = re.compile(r"(?:\\[A-Za-z]+|\{[^{}]*\}|[A-Za-z0-9])")
 # `#` is only legal in macro definitions, which a page transcription never has.
 _DEFINES_MACROS = re.compile(r"\\(?:re)?newcommand|\\providecommand|\\def\b|\\newenvironment|\\renewenvironment")
 
@@ -237,7 +243,7 @@ def autofix_latex(latex: str) -> Tuple[str, List[str]]:
     st = _State()
     out: List[str] = []
     pos = 0
-    n_amp = n_close = n_stray = n_wrap = n_hash = n_uni = 0
+    n_amp = n_close = n_stray = n_wrap = n_hash = n_uni = n_sup = 0
 
     def closer(name: str, wrapped: bool) -> str:
         return f"\\end{{{name}}}" + ("\n\\]" if wrapped else "")
@@ -293,6 +299,24 @@ def autofix_latex(latex: str) -> Tuple[str, List[str]]:
                 n_hash += 1
             else:
                 out.append(token)
+        elif kind == "sup":
+            if st.in_math():
+                out.append(token)
+            else:
+                # Pull the operand that is already written back out, take the one
+                # that follows, and set the three of them as maths.
+                tail = "".join(out)
+                before = _OPERAND_BEFORE.search(tail)
+                head = before.group(0) if before else ""
+                if before:
+                    out = [tail[:before.start()]]
+                after = _OPERAND_AFTER.match(latex, pos)
+                foot = ""
+                if after:
+                    foot = after.group(0)
+                    pos = after.end()
+                out.append(f"${head}{token}{foot}$")
+                n_sup += 1
         elif kind == "d":
             if not st.dd:
                 st.dollar = not st.dollar
@@ -326,6 +350,8 @@ def autofix_latex(latex: str) -> Tuple[str, List[str]]:
         changes.append(f"escaped {n_amp} bare '&'")
     if n_hash:
         changes.append(f"escaped {n_hash} bare '#'")
+    if n_sup:
+        changes.append(f"put {n_sup} text-mode sub/superscript(s) into math")
     if n_close:
         changes.append(f"closed {n_close} unclosed environment(s)")
     if n_stray:
