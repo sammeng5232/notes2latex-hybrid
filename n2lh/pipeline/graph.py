@@ -21,6 +21,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
+from PIL import Image
+
 from n2lh.compiler.latex import CompileResult, LatexCompiler
 from n2lh.pipeline.assembler import build_document
 from n2lh.pipeline.context import ContextWindow, EnvironmentTracker
@@ -29,6 +31,7 @@ from n2lh.pipeline.figures import render_figures
 from n2lh.pipeline.layout import tidy_layout
 from n2lh.pipeline.sanitize import comment_out, sanitize_body
 from n2lh.pipeline.style import bold_labels
+from n2lh.pipeline.tables import crop_band, find_table_band, replace_tabular
 from n2lh.recognition.base import PageImage, Recognizer, TranscribeResult
 from n2lh.recognition.prompts import PREAMBLE_TEX, fix_user_prompt
 
@@ -127,6 +130,7 @@ class DocumentPipeline:
         self.recognizer = recognizer
         self.preamble = preamble or PREAMBLE_TEX
         self._figures_dir: Optional[Path] = None   # set per run(): <outdir>/figures
+        self._tables_read: set = set()   # a page's table is re-read at most once
         self.compiler = compiler
         self.fixer = fixer          # engine used for log-guided repair passes
         self.max_retries = max(1, max_retries + 1)  # total attempts per page
@@ -469,6 +473,7 @@ class DocumentPipeline:
         if "\\figbox" in latex and self._figures_dir is not None:
             latex = render_figures(latex, page.path, self._figures_dir, page.index,
                                    locator=lambda: self._locate(page))
+        latex = self._reread_table(page, latex)
         latex, bolded = bold_labels(latex)
         if bolded:
             log.debug("page %d: bolded %d label(s)", page.index, bolded)
@@ -479,6 +484,37 @@ class DocumentPipeline:
             result = TranscribeResult(latex=latex, engine=result.engine,
                                       confidence=result.confidence, notes=result.notes)
         return result
+
+    def _reread_table(self, page: PageImage, latex: str) -> str:
+        """Read a ruled table again from a crop of it (best-effort).
+
+        A table is the one thing a whole-page transcription reliably gets wrong,
+        because the page is downscaled before it is sent and the cells stop being
+        legible; see n2lh/pipeline/tables.py. Each page is re-read at most once.
+        """
+        reread = getattr(self.recognizer, "transcribe_table", None)
+        if (reread is None or "begin{tabular}" not in latex
+                or page.index in self._tables_read or self._cancelled()):
+            return latex
+        self._tables_read.add(page.index)
+        try:
+            with Image.open(page.path) as opened:
+                image = opened.convert("RGB")
+            dark = image.convert("L").point(lambda v: 255 if v < 145 else 0)
+            band = find_table_band(dark)
+            if band is None:
+                return latex
+            crop = crop_band(image, band, page.path.parent / f".table-p{page.index:04d}.png")
+            table = _call_with_deadline(lambda: reread(crop),
+                                        self._call_budget(self.recognizer))
+            if not table:
+                return latex
+            latex, swapped = replace_tabular(latex, table)
+            if swapped:
+                log.info("page %d: table re-read from a crop", page.index)
+        except Exception as exc:  # noqa: BLE001 - the page's own table still stands
+            log.warning("page %d: could not re-read the table: %s", page.index, exc)
+        return latex
 
     def _locate(self, page: PageImage):
         """Accurate figure boxes from the recognizer, or None (best-effort)."""

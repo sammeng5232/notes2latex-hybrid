@@ -39,7 +39,7 @@ import httpx
 from PIL import Image
 
 from n2lh.recognition.base import PageImage, Recognizer, TranscribeResult
-from n2lh.recognition.prompts import (
+from n2lh.recognition.prompts import (TABLE_SYSTEM, TABLE_USER,
     FIX_SYSTEM,
     LOCATE_SYSTEM,
     LOCATE_USER,
@@ -259,6 +259,12 @@ class VLMRecognizer(Recognizer):
         latex = _extract_latex(content)
         return TranscribeResult(latex=latex, engine=self.name,
                                 notes=None if not guidance else "repair pass")
+
+    def transcribe_table(self, image_path) -> Optional[str]:
+        """Read one table from a crop. See n2lh/pipeline/tables.py for why."""
+        text = self._chat(TABLE_SYSTEM, TABLE_USER, image_path)
+        latex = _extract_latex(text)
+        return latex if "begin{tabular}" in latex else None
 
     def locate_figures(self, page: PageImage) -> Optional[List[tuple]]:
         """One dedicated request for accurate figure boxes (0..1000, top-left origin).

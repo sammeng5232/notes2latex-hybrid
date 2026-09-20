@@ -113,6 +113,21 @@ FIGURES - do NOT redraw them
 
 Continue seamlessly from the context you are given."""
 
+TABLE_SYSTEM = r"""You transcribe ONE ruled table from a crop of handwritten lecture notes into a LaTeX tabular.
+Output ONLY the tabular environment: no preamble, no surrounding text, no commentary, no code fences.
+
+- Count the columns in the header row first, and give every row exactly that many cells. Transcribe that header as the table's first row (its first cell is usually blank). Include a column that is repetitive or often empty.
+- Copy each cell exactly as written. Do not normalise notation, do not convert a formula to an equivalent one, and do not supply a formula the cell does not contain because the column heading suggests it.
+- A cell often holds two formulas separated by a comma; read to the right-hand edge and transcribe both. Copy each function name letter for letter: Cov, Cor and Corr are three different spellings and the number of r's matters, so a Corr must not be shortened to Cor, and neither must become Cov. A handwritten r is easily taken for a v; a covariance is a plain product, a correlation carries a ratio or a square root.
+- Keep the author's subscripts (x_i, x_j stay x_i, x_j) and their parameterisation.
+- An indicator 1 is \mathbbm{1}. Escape a literal & as \&.
+"""
+
+TABLE_USER = (
+    "This is a crop of one table from a page of handwritten mathematics notes. "
+    "Transcribe the whole table as a single LaTeX tabular, every row and every column."
+)
+
 LOCATE_SYSTEM = (
     "You are a precise figure locator for scanned handwritten notes. "
     "Reply with the JSON list only, no commentary."

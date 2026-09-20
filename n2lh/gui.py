@@ -107,15 +107,22 @@ class _Bridge:
     real folder picker through here.
     """
 
+    # The window is held under a leading underscore deliberately. pywebview builds
+    # the JS bridge by walking dir() of this object and recursing into every public
+    # non-callable attribute; a public `window` leads it into the WinForms form and
+    # then into .NET COM objects, where it followed
+    # native.AccessibilityObject.Bounds.Empty.Empty... until it hit Python's
+    # recursion limit, logging a huge error and leaving the window unresponsive.
+    # Names starting with "_" are skipped (webview/util.py: get_functions).
     def __init__(self) -> None:
-        self.window = None
+        self._window = None
 
     def pick_folder(self, start: str = "") -> str:
         """Native folder chooser; returns "" when the user cancels."""
         import webview
 
         try:
-            chosen = self.window.create_file_dialog(
+            chosen = self._window.create_file_dialog(
                 webview.FileDialog.FOLDER, directory=start or "")
         except Exception:
             log.exception("folder dialog failed")
@@ -153,7 +160,7 @@ def _open_webview(url: str) -> bool:
         # the Download .tex / .pdf buttons do nothing at all in the window.
         webview.settings["ALLOW_DOWNLOADS"] = True
         bridge = _Bridge()
-        bridge.window = webview.create_window(
+        bridge._window = webview.create_window(
             "notes2latex-hybrid", url, width=1280, height=860, min_size=(900, 600),
             js_api=bridge)
         webview.start()

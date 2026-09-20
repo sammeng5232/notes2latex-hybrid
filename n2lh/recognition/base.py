@@ -38,6 +38,14 @@ class Recognizer(abc.ABC):
                    guidance: Optional[str] = None) -> TranscribeResult:
         ...
 
+    def transcribe_table(self, image_path) -> Optional[str]:
+        """A LaTeX tabular read from a crop holding just one table, or None.
+
+        Optional: an engine that cannot do a second, focused pass returns None
+        and the page's own transcription of the table stands.
+        """
+        return None
+
     def locate_figures(self, page: PageImage) -> Optional[List[Tuple[int, int, int, int]]]:
         """Accurate figure boxes for ``page`` as ``(x0, y0, x1, y1)`` in 0..1000
         (relative to the image, origin top-left), or None if this engine cannot
