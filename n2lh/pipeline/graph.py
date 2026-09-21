@@ -25,16 +25,18 @@ from PIL import Image
 
 from n2lh.compiler.latex import CompileResult, LatexCompiler
 from n2lh.pipeline.assembler import build_document
-from n2lh.pipeline.colors import apply_color_runs, extract_color_runs
+from n2lh.pipeline.colors import (apply_color_runs, extract_color_runs,
+                                  reconcile_colors)
 from n2lh.pipeline.context import ContextWindow, EnvironmentTracker
 from n2lh.pipeline.autofix import autofix_latex
 from n2lh.pipeline.cjk import add_cjk, engine_for, has_cjk
 from n2lh.pipeline.figures import render_figures
-from n2lh.pipeline.ingest import colored_ink_regions
+from n2lh.pipeline.ingest import colored_ink_regions, color_only_crop
 from n2lh.pipeline.layout import tidy_layout
 from n2lh.pipeline.sanitize import comment_out, sanitize_body
 from n2lh.pipeline.style import bold_labels
-from n2lh.pipeline.tables import crop_band, find_table_band, insert_tabular, replace_tabular
+from n2lh.pipeline.tables import (crop_band, find_table_band, insert_tabular,
+                                  replace_tabular, wrap_corner_table)
 from n2lh.recognition.base import PageImage, Recognizer, TranscribeResult
 from n2lh.recognition.prompts import PREAMBLE_TEX, fix_user_prompt
 
@@ -554,24 +556,26 @@ class DocumentPipeline:
     def _apply_colors(self, page: PageImage, latex: str) -> str:
         """Put colored ink back via a focused re-read of the colored regions.
 
-        The whole-page transcription reliably drops ink color (see
-        n2lh/pipeline/colors.py), so when the page carries color and the
-        transcription has no \\textcolor, each colored region is cropped,
-        re-read with a color-only prompt, and the returned runs are merged
-        into this page's own LaTeX. The runs are read once per page and
-        cached: a repair pass re-merges them against its own latex for free.
-        Best-effort throughout -- a failed or empty re-read leaves the page
-        exactly as it was.
+        The whole-page transcription is unreliable about color in BOTH
+        directions (see n2lh/pipeline/colors.py): it drops the colors that
+        are there, and it invents ones that are not. So each colored region
+        is cropped and re-read with a color-only prompt whatever the
+        transcription did: the read's runs are merged into this page's own
+        LaTeX, and the transcription's own \\textcolor runs of a color whose
+        region read out are kept only when the read corroborates them. The
+        reads happen once per page and are cached: a repair pass re-merges
+        them against its own latex for free. Best-effort throughout -- a
+        failed or empty re-read leaves the page exactly as it was.
         """
-        if "\\textcolor" in latex or self._cancelled():
+        if self._cancelled():
             return latex
         reread = getattr(self.recognizer, "transcribe_colors", None)
         if reread is None:
             return latex
         try:
-            runs = self._color_runs.get(page.index)
-            if runs is None:
-                runs = []
+            cached = self._color_runs.get(page.index)
+            if cached is None:
+                runs, corner_texts, reads = [], [], {}
                 with Image.open(page.path) as opened:
                     image = opened.convert("RGB")
                 for i, (box, names) in enumerate(colored_ink_regions(image)):
@@ -579,7 +583,10 @@ class DocumentPipeline:
                     # read (the endpoint sometimes answers nothing but a
                     # tool_calls finish) must not cost the other regions.
                     try:
-                        crop = image.crop(box)
+                        # Only the colored ink: black words run through the
+                        # region and must not be readable, or the model marks
+                        # them colored (see color_only_crop).
+                        crop = color_only_crop(image, box)
                         # Enlarged so the crop survives the client's 1600px
                         # downscale, exactly like the table crop.
                         if crop.width < 2400:
@@ -592,17 +599,53 @@ class DocumentPipeline:
                             lambda cp=crop_path, ns=names: reread(cp, ns),
                             self._call_budget(self.recognizer))
                         if read:
-                            runs.extend(extract_color_runs(read))
+                            region_runs = extract_color_runs(read)
+                            for color, plain in region_runs:
+                                reads.setdefault(color, []).append(plain)
+                            # The read succeeded, so it adjudicates these
+                            # colors even when it found no runs of its own.
+                            for name in names:
+                                reads.setdefault(name, [])
+                            cx = (box[0] + box[2]) / 2 / max(image.width, 1)
+                            cy = (box[1] + box[3]) / 2 / max(image.height, 1)
+                            # Runs from a left-margin region are not applied:
+                            # margin marks are single glyphs beside the body,
+                            # and the focused read misreads them as short
+                            # words ("预备", "测度") that would color body
+                            # text. The region still adjudicates colors and
+                            # counts as evidence -- its runs just color
+                            # nothing.
+                            if cx >= 0.15:
+                                runs.extend(region_runs)
+                            # A colored block in the top-right corner is the
+                            # page's corner table (or its marks): remember its
+                            # texts so the table can be floated back to the
+                            # corner whatever the transcription did with it.
+                            if cx > 0.6 and cy < 0.25:
+                                corner_texts.extend(t for _, t in region_runs)
                     except Exception as exc:  # noqa: BLE001 - one region only
                         log.warning("page %d: colored region %d not re-read: %s",
                                     page.index, i, exc)
-                self._color_runs[page.index] = runs
-            if not runs:
-                return latex
-            latex, n = apply_color_runs(latex, runs)
-            if n:
-                log.info("page %d: %d colored run(s) applied from crop re-reads",
-                         page.index, n)
+                self._color_runs[page.index] = (runs, corner_texts, reads)
+            else:
+                runs, corner_texts, reads = cached
+            if "\\textcolor" in latex and reads:
+                latex, n_unwrapped = reconcile_colors(latex, reads)
+                if n_unwrapped:
+                    log.info("page %d: %d invented colored run(s) unwrapped",
+                             page.index, n_unwrapped)
+            if runs:
+                latex, n = apply_color_runs(latex, runs)
+                if n:
+                    log.info("page %d: %d colored run(s) applied from crop re-reads",
+                             page.index, n)
+            if corner_texts:
+                # The corner table's own text tells us which tabular it is; the
+                # repositioning itself is deterministic (see wrap_corner_table).
+                latex, moved = wrap_corner_table(latex, corner_texts)
+                if moved:
+                    log.info("page %d: corner table floated beside the body text",
+                             page.index)
         except Exception as exc:  # noqa: BLE001 - colors are best-effort
             log.warning("page %d: could not re-read the colored ink: %s",
                         page.index, exc)

@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import List, Optional, Tuple
 
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageFilter
 
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff", ".gif"}
 
@@ -90,6 +90,12 @@ def colored_ink_regions(img: Image.Image, max_regions: int = 3) -> List[Tuple[Tu
     that prompted this it separated a pink vocabulary column on the right from
     green margin marks on the left, which is exactly the split a focused
     re-read needs: one crop per colored thing, no black bulk around it.
+
+    The box is the cluster's own colored pixels plus a small fixed pad (about
+    1% of the short page edge), NOT the coarse grid cells: a wide crop of a
+    narrow margin strip pulled in the beginnings of the black body lines, and
+    the model then marked those green -- the crop must contain nothing the
+    colored pen did not write.
     """
     arr = np.asarray(img.convert("RGB")).astype(int)
     h, w, _ = arr.shape
@@ -99,10 +105,11 @@ def colored_ink_regions(img: Image.Image, max_regions: int = 3) -> List[Tuple[Tu
         return []
     ys, xs = np.where(colored)
     G = 50
+    cell_y = ys * G // h
+    cell_x = xs * G // w
     cells: dict = {}
-    for y, x in zip(ys, xs):
-        c = (int(y * G // h), int(x * G // w))
-        cells[c] = cells.get(c, 0) + 1
+    for cy, cx in zip(cell_y, cell_x):
+        cells[(cy, cx)] = cells.get((cy, cx), 0) + 1
     # A dense cell holds real strokes, not scattered noise.
     hot_threshold = max(20, n // 500)
     hot = {c for c, k in cells.items() if k >= hot_threshold}
@@ -124,21 +131,44 @@ def colored_ink_regions(img: Image.Image, max_regions: int = 3) -> List[Tuple[Tu
         comps.append(comp)
     comps.sort(key=lambda comp: -sum(cells[c] for c in comp))
     keep_min = max(500, int(0.03 * n))
+    pad = max(16, int(0.01 * min(h, w)))
     regions = []
     for comp in comps:
         if sum(cells[c] for c in comp) < keep_min or len(regions) >= max_regions:
             break
-        cys = [c[0] for c in comp]
-        cxs = [c[1] for c in comp]
-        pad_y, pad_x = max(2, int(h * 0.012)), max(2, int(w * 0.012))
-        box = (max(0, int(min(cxs) * w / G) - pad_x),
-               max(0, int(min(cys) * h / G) - pad_y),
-               min(w, int((max(cxs) + 1) * w / G) + pad_x),
-               min(h, int((max(cys) + 1) * h / G) + pad_y))
+        grid = np.zeros((G, G), dtype=bool)
+        for c in comp:
+            grid[c] = True
+        member = grid[cell_y, cell_x]
+        rys, rxs = ys[member], xs[member]
+        box = (max(0, int(rxs.min()) - pad), max(0, int(rys.min()) - pad),
+               min(w, int(rxs.max()) + 1 + pad), min(h, int(rys.max()) + 1 + pad))
         sub = arr[box[1]:box[3], box[0]:box[2]]
         m = colored[box[1]:box[3], box[0]:box[2]]
         regions.append((box, _classify(sub, m)))
     return regions
+
+
+def color_only_crop(img: Image.Image, box: Tuple[int, int, int, int]) -> Image.Image:
+    """The region's crop with everything but the colored ink whitened.
+
+    Black text runs through the colored regions themselves -- the margin
+    marks sit right on the beginnings of the body lines -- so a plain crop
+    shows the model black words, and it marks those colored (a real run
+    turned "为外测度", black body text, green). With the rest whitened, the
+    read can only report ink that is actually colored: the crop contains
+    nothing the colored pen did not write, by construction instead of by
+    cropping. The mask is dilated a little so stroke edges survive.
+    """
+    crop = img.crop(box).convert("RGB")
+    arr = np.asarray(crop).astype(int)
+    m = _colored_mask(arr)
+    # 5x5 MaxFilter = ~2px dilation, enough for anti-aliased stroke edges.
+    grown = Image.fromarray((m * 255).astype(np.uint8)).filter(ImageFilter.MaxFilter(5))
+    keep = np.asarray(grown) > 0
+    out = np.asarray(crop).copy()
+    out[~keep] = 255
+    return Image.fromarray(out)
 
 
 def _has_color_ink(img: Image.Image) -> bool:

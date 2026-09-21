@@ -560,14 +560,50 @@ def _data_uri(image_path, max_edge: int) -> str:
     return f"data:image/png;base64,{b64}"
 
 
+# Unfenced replies sometimes open with a sentence of commentary ("Here is the
+# transcription of the page.") or close with one ("Let me know if you want
+# changes.") -- on a real page that line ended up as the first line of the
+# compiled document. A genuine first line of notes can be plain text too ("Here
+# is my proof of theorem 3"), so only commentary that names what it is handing
+# over is dropped, and only when it has no LaTeX and no Chinese in it.
+_CHATTER_LINE = re.compile(
+    r"^(?:here (?:is|'s) (?:the |a |your )?"
+    r"(?:transcription|latex|output|corrected|updated|revised|full|page).{0,60}[.:]?"
+    r"|below (?:is|are) (?:the |a |your )?"
+    r"(?:transcription|latex|output|corrected|updated|table|tabular|page).{0,60}[.:]?"
+    r"|(?:transcription|latex|output|the page|the table)\s*[:.]"
+    r"|sure[!,.].{0,70}"
+    r"|certainly[!,.].{0,70}"
+    r"|i (?:will|'ll|have) (?:now )?(?:transcribed|extracted|read|fixed|corrected).{0,60}[.:]?"
+    r"|let me know [a-z0-9 ,.'-]{0,60}[.:]?"
+    r"|hope (?:this|that) helps[.!]?)$",
+    re.IGNORECASE)
+
+
+def _strip_chatter(text: str) -> str:
+    """Drop leading/trailing pure-commentary lines (see _CHATTER_LINE)."""
+    def is_chatter(line: str) -> bool:
+        line = line.strip()
+        return bool(line) and _CHATTER_LINE.match(line) is not None \
+            and "\\" not in line \
+            and not any("\u3400" <= c <= "\u9fff" for c in line)
+
+    lines = text.splitlines()
+    while lines and is_chatter(lines[0]):
+        lines.pop(0)
+    while lines and is_chatter(lines[-1]):
+        lines.pop()
+    return "\n".join(lines).strip()
+
+
 def _extract_latex(content: str) -> str:
     if not content:
         return ""
     m = _FENCE.search(content)
     if m:
-        return m.group(1).strip()
-    # Unfenced reply: strip a leading "Here is..." line if present.
+        return _strip_chatter(m.group(1).strip())
+    # Unfenced reply: drop the "Here is the transcription of the page." bookends.
     stripped = content.strip()
     if stripped.startswith("```"):
         stripped = stripped.strip("`")
-    return stripped
+    return _strip_chatter(stripped)

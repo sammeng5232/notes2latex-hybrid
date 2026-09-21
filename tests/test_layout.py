@@ -147,3 +147,5 @@ def test_a_table_that_already_fits_is_not_shrunk(tmp_path):
 
     table = "\\begin{tabular}{ll} a & b \\\\ c & d \\\\ \\end{tabular}"
     assert abs(width_of(table) - width_of(fit_wide_tables(table)[0])) <= 2
+
+

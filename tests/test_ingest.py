@@ -121,3 +121,45 @@ def test_a_single_pen_family_is_named_alone():
 def test_a_grayscale_page_has_no_color_names():
     img = _page((255, 255, 255), (30, 30, 30))
     assert color_ink_names(img) == []
+
+
+# ------------------------------------------------------------- region crops
+def test_a_color_region_crop_excludes_neighbouring_black_text():
+    """A wide crop of a green margin strip pulled in the beginnings of the
+    black body lines, and the model then marked those green: the crop must
+    contain nothing the colored pen did not write."""
+    from n2lh.pipeline.ingest import colored_ink_regions
+
+    im = Image.new("RGB", (1000, 1400), (255, 255, 255))
+    px = im.load()
+    for x in range(50, 200):            # green margin marks
+        for y in range(100, 400):
+            px[x, y] = (91, 164, 128)
+    for x in range(260, 600):           # black body text beside them
+        for y in range(100, 1200):
+            px[x, y] = (40, 40, 40)
+    regions = colored_ink_regions(im)
+    assert len(regions) == 1
+    box, names = regions[0]
+    assert names == ["green"]
+    assert box[2] < 260, "the black body text stays out of the color crop"
+    assert box[0] < 50 and box[1] < 100, "the marks themselves are inside"
+
+
+def test_a_color_crop_whitens_the_black_text_running_through_it():
+    """The margin marks sit right on the beginnings of the body lines; a plain
+    crop showed the model black words and it marked those green."""
+    from n2lh.pipeline.ingest import color_only_crop
+
+    im = Image.new("RGB", (300, 200), (255, 255, 255))
+    px = im.load()
+    for x in range(10, 60):            # green margin mark
+        for y in range(50, 90):
+            px[x, y] = (91, 164, 128)
+    for x in range(40, 220):           # black body line through the same box
+        for y in range(62, 74):
+            px[x, y] = (30, 30, 30)
+    crop = color_only_crop(im, (0, 0, 250, 150))
+    px = crop.load()
+    assert px[20, 55] == (91, 164, 128), "the green stroke itself survives"
+    assert px[150, 68] == (255, 255, 255), "black text far from green is gone"

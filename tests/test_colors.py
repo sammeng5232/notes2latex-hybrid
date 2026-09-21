@@ -139,7 +139,9 @@ def test_a_colored_page_gets_its_colors_back(tmp_path):
     assert names == ["pink"]
 
 
-def test_a_transcription_that_already_has_colors_costs_no_call(tmp_path):
+def test_a_color_the_model_got_right_is_kept_and_not_doubled(tmp_path):
+    """The read now runs even when the transcription colored something: it
+    adjudicates. A color it corroborates stays, exactly once."""
     class AlreadyColored(ColorDroppingRecognizer):
         def transcribe(self, page, context_tail, open_environments, guidance=None):
             return TranscribeResult(
@@ -147,9 +149,46 @@ def test_a_transcription_that_already_has_colors_costs_no_call(tmp_path):
                 engine=self.name)
 
     rec = AlreadyColored()
-    pipe = DocumentPipeline(rec, OkCompiler(), fixer=None, max_retries=0)
-    pipe.run([PageImage(1, colored_page(tmp_path))], tmp_path / "out")
-    assert rec.calls == []
+    result = DocumentPipeline(rec, OkCompiler(), fixer=None, max_retries=0).run(
+        [PageImage(1, colored_page(tmp_path))], tmp_path / "out")
+    assert result.tex.count("\\textcolor{pink}{Epigraph and Supgraph}") == 1
+    assert len(rec.calls) == 1, "the read runs to adjudicate the model's colors"
+
+
+def test_a_color_the_model_invented_is_unwrapped(tmp_path):
+    """The green pen on the real page was single margin characters; the model
+    marked seven body statements green, and every one was wrong. A color whose
+    region read out is only kept when the read corroborates it."""
+    class Inventor(ColorDroppingRecognizer):
+        def transcribe(self, page, context_tail, open_environments, guidance=None):
+            return TranscribeResult(
+                latex="\\textcolor{pink}{定理 3.2 (Egorov) 说依测度收敛。}"
+                      "然后 \\textcolor{pink}{Epigraph and Supgraph} 结束。",
+                engine=self.name)
+
+    result = DocumentPipeline(Inventor(), OkCompiler(), fixer=None,
+                              max_retries=0).run(
+        [PageImage(1, colored_page(tmp_path))], tmp_path / "out")
+    assert "textcolor{pink}{定理 3.2 (Egorov)" not in result.tex
+    assert "定理 3.2 (Egorov) 说依测度收敛。" in result.tex, "the words stay"
+    assert result.tex.count("\\textcolor{pink}{Epigraph and Supgraph}") == 1
+
+
+def test_a_flaky_read_leaves_the_models_own_colors_alone(tmp_path):
+    """The read failed, so nothing was adjudicated: the model's colors stand."""
+    class FlakyRead(ColorDroppingRecognizer):
+        def transcribe(self, page, context_tail, open_environments, guidance=None):
+            return TranscribeResult(
+                latex="\\textcolor{pink}{Epigraph and Supgraph} stands.",
+                engine=self.name)
+
+        def transcribe_colors(self, image_path, names=None):
+            raise RuntimeError("tool_calls finish, no content")
+
+    result = DocumentPipeline(FlakyRead(), OkCompiler(), fixer=None,
+                              max_retries=0).run(
+        [PageImage(1, colored_page(tmp_path))], tmp_path / "out")
+    assert "\\textcolor{pink}{Epigraph and Supgraph}" in result.tex
 
 
 def test_a_grayscale_page_costs_no_color_call(tmp_path):
@@ -205,3 +244,111 @@ def test_one_flaky_region_does_not_cost_the_others(tmp_path):
         [PageImage(1, page)], tmp_path / "out")
     assert "\\textcolor{green}{Epigraph and Supgraph}" in result.tex
     assert len(rec.calls) == 2, "both regions were attempted"
+
+
+def test_a_glossary_term_recurring_in_the_body_is_colored_where_the_table_is():
+    """Glossary words are exactly the words that also appear in the body; the
+    unambiguous runs anchor where the colored block sits, and a recurring term
+    is colored at the occurrence nearest that, not the first one found."""
+    page = ("\\begin{tabular}{ll}\n"
+            "Cantor 闭集套定理 & Closed \\\\\n"
+            "振幅 & Oscillation \\\\\n"
+            "\\end{tabular}\n\n"
+            "定理1.17 (Cantor 闭集套定理) 设 $F$ 为闭集列。")
+    out, n = apply_color_runs(page, [("pink", "Cantor 闭集套定理"),
+                                     ("pink", "振幅")])
+    assert n == 2
+    tabular, body = out.split("\n\n")
+    assert "textcolor{pink}{Cantor 闭集套定理} &" in tabular
+    assert "textcolor{pink}{振幅}" in tabular
+    assert body == "定理1.17 (Cantor 闭集套定理) 设 $F$ 为闭集列。", \
+        "the body's own mention stays black"
+
+
+def test_an_ambiguous_run_with_no_anchor_is_skipped():
+    """Nothing says which occurrence is meant, so none of them is colored:
+    a missing color beats a color on the wrong words."""
+    out, n = apply_color_runs("alpha and alpha again", [("pink", "alpha")])
+    assert n == 0 and out == "alpha and alpha again"
+
+
+def test_the_corner_table_is_floated_beside_the_body(tmp_path):
+    """One pass stacks the corner table under the title, another moves it to
+    the end of the page; the colored corner is where it actually sat, so it is
+    floated back beside the body text whatever the transcription did."""
+    class TableMover(ColorDroppingRecognizer):
+        def transcribe(self, page, context_tail, open_environments, guidance=None):
+            return TranscribeResult(latex=(
+                "\\textbf{实变函数笔记}\n\n"
+                "定理1.16 设 $E$ 可测。\n\n"
+                "\\fitpage{\\begin{tabular}{ll}\n"
+                "Epigraph and Supgraph & 上方图形 \\\\\n"
+                "\\end{tabular}}"), engine=self.name)
+
+    result = DocumentPipeline(TableMover(), OkCompiler(), fixer=None,
+                              max_retries=0).run(
+        [PageImage(1, colored_page(tmp_path))], tmp_path / "out")
+    assert "wraptable" in result.tex
+    assert result.tex.index("实变函数笔记") < result.tex.index("wraptable")
+    assert result.tex.index("wraptable") < result.tex.index("定理1.16"), \
+        "the table floats beside the body, not after it"
+    assert "textcolor{pink}{Epigraph and Supgraph}" in result.tex
+
+
+# ------------------------------------------------------- reconciling colors
+def test_an_invented_color_is_unwrapped_but_a_kept_one_is_not():
+    from n2lh.pipeline.colors import reconcile_colors
+    page = ("\\textcolor{green}{Egorov 定理是绿色的} 以及 "
+            "\\textcolor{green}{\\underline{有界变差}}")
+    out, n = reconcile_colors(page, {"green": ["有界变差"]})
+    assert n == 1
+    assert "Egorov 定理是绿色的" in out
+    assert "textcolor{green}" not in out.split("以及")[0]
+    assert "\\textcolor{green}{\\underline{有界变差}}" in out
+
+
+def test_a_color_whose_read_failed_is_not_adjudicated():
+    from n2lh.pipeline.colors import reconcile_colors
+    page = "\\textcolor{green}{Egorov 定理是绿色的}"
+    out, n = reconcile_colors(page, {})          # green region never read out
+    assert n == 0 and out == page
+
+
+def test_a_run_the_transcription_already_wrapped_is_not_wrapped_again():
+    out, n = apply_color_runs(
+        "before \\textcolor{pink}{Epigraph and Supgraph} after",
+        [("pink", "Epigraph and Supgraph")])
+    assert n == 0
+    assert out.count("\\textcolor") == 1
+
+
+
+def test_margin_mark_reads_color_nothing(tmp_path):
+    """The green margin strip reads out as short words ("测度" was a real
+    misread of single marks); those runs must not color body text that
+    happens to contain them. Left-margin regions adjudicate colors but
+    contribute no runs of their own."""
+    im = Image.new("RGB", (1000, 1400), (255, 255, 255))
+    px = im.load()
+    for x in range(10, 120):            # green marks down the left edge
+        for y in range(100, 900):
+            px[x, y] = (91, 164, 128)
+    page = tmp_path / "margin.png"
+    im.save(page)
+
+    class MarginReader(ColorDroppingRecognizer):
+        def transcribe(self, page, context_tail, open_environments, guidance=None):
+            return TranscribeResult(
+                latex="定理 2.1 $m^*$ 为外测度，测度是核心概念。",
+                engine=self.name)
+
+        def transcribe_colors(self, image_path, names=None):
+            self.calls.append(names)
+            return "\\textcolor{green}{测度}"
+
+    rec = MarginReader()
+    result = DocumentPipeline(rec, OkCompiler(), fixer=None, max_retries=0).run(
+        [PageImage(1, page)], tmp_path / "out")
+    assert len(rec.calls) == 1, "the margin read still runs and adjudicates"
+    assert "\\textcolor" not in result.tex, "its runs color nothing"
+    assert "为外测度，测度是核心概念" in result.tex

@@ -14,11 +14,18 @@ the colored ink is (density clustering, no model call); the recognizer is
 asked to transcribe each region's crop with the colors marked; and the runs it
 returns are merged into the page's own LaTeX here.
 
-The merge is deliberately conservative: a run only ever wraps text that is
-ALREADY in the page LaTeX (found fuzzily, because two readings of the same
-handwriting differ: "Closed nested sets thm" vs "...theorem"). The crop read
-contributes the COLOR, never the CONTENT -- a wrong span match is skipped, not
-guessed.
+The merge is deliberately conservative, in two ways:
+
+* a run only ever wraps text that is ALREADY in the page LaTeX (found fuzzily,
+  because two readings of the same handwriting differ: "Closed nested sets
+  thm" vs "...theorem") -- the crop read contributes the COLOR, never the
+  CONTENT;
+* a run whose text occurs MORE THAN ONCE (a glossary term is exactly a word
+  that also appears in the body) is only applied when other, unambiguous runs
+  anchor where the colored block sits: it is then colored at the occurrence
+  nearest that anchor. On the real page, "Cantor 闭集套定理" was pinked inside
+  a body theorem because it also names a glossary cell; with nothing to anchor
+  it, an ambiguous run is skipped -- a missing color beats a wrong one.
 """
 
 from __future__ import annotations
@@ -26,7 +33,7 @@ from __future__ import annotations
 import logging
 import re
 from difflib import SequenceMatcher
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 log = logging.getLogger("n2lh.colors")
 
@@ -64,26 +71,14 @@ def _plain(text: str) -> str:
     return re.sub(r"[{}\s]+", " ", text).strip()
 
 
-def _locate(page_latex: str, plain: str,
-            placed: List[Tuple[int, int]]) -> Optional[Tuple[int, int]]:
-    """Where (start, end) in page_latex the run's text best matches.
+def _widen(page_latex: str, start: int, end: int) -> Tuple[int, int]:
+    """Widen a span to whole word/command boundaries.
 
-    SequenceMatcher against the whole page gives the longest common substring;
-    covering >= _MIN_MATCH of the run means "this is that text, misread a
-    little". The span is then widened to whole word/command boundaries so the
-    wrap cannot cut a token in half, and to include a simple wrapping command
-    (underline, bold) so a colored underline comes out as one nested command
-    (color outside, underline inside) rather than a nesting that hides it.
+    Never wrap half a word or half a command, and include a simple wrapping
+    command (\\underline{...}, \\textbf{...}) so a colored underline comes out
+    as one nested command (color outside, underline inside) rather than a
+    nesting that hides it.
     """
-    matcher = SequenceMatcher(None, plain, page_latex, autojunk=False)
-    block = max(matcher.get_matching_blocks(),
-                key=lambda b: b.size, default=None)
-    if block is None or block.size == 0:
-        return None
-    if block.size < _MIN_MATCH * len(plain):
-        return None
-    start, end = block.b, block.b + block.size
-    # Widen to token boundaries: never wrap half a word or half a command.
     while start > 0 and page_latex[start - 1].isalnum():
         start -= 1
     while end < len(page_latex) and page_latex[end].isalnum():
@@ -97,40 +92,159 @@ def _locate(page_latex: str, plain: str,
     # ... and so does a simple \command{match} around it.
     if start > 0 and page_latex[start - 1] == "{":
         cs = start - 2
-        while cs > 0 and (page_latex[cs].isalnum()):
+        while cs > 0 and page_latex[cs].isalnum():
             cs -= 1
         if cs >= 0 and page_latex[cs] == "\\":
             start = cs
             if end < len(page_latex) and page_latex[end] == "}":
                 end += 1
-    for p0, p1 in placed:
-        if start < p1 and end > p0:      # overlaps a run already colored
-            return None
     return start, end
+
+
+def _occurrences(page_latex: str, plain: str) -> List[Tuple[int, int]]:
+    """All whitespace-flexible exact occurrences of the run's text."""
+    words = plain.split()
+    if not words:
+        return []
+    pattern = re.compile(r"\s+".join(re.escape(word) for word in words), re.S)
+    return [_widen(page_latex, *m.span()) for m in pattern.finditer(page_latex)]
+
+
+def _locate(page_latex: str, plain: str) -> Optional[Tuple[int, int]]:
+    """The best fuzzy (SequenceMatcher) span for the run's text, or None.
+
+    Used when the text does not occur verbatim: two readings of the same
+    handwriting differ. Covering >= _MIN_MATCH of the run means "this is that
+    text, misread a little".
+    """
+    matcher = SequenceMatcher(None, plain, page_latex, autojunk=False)
+    block = max(matcher.get_matching_blocks(),
+                key=lambda b: b.size, default=None)
+    if block is None or block.size == 0:
+        return None
+    if block.size < _MIN_MATCH * len(plain):
+        return None
+    return _widen(page_latex, block.b, block.b + block.size)
+
+
+def _overlaps(span: Tuple[int, int], placed: List[Tuple[int, int]]) -> bool:
+    return any(span[0] < p1 and span[1] > p0 for p0, p1 in placed)
+
+
+def _already_wrapped(page_latex: str, span: Tuple[int, int], color: str) -> bool:
+    """Is this span already inside a \\textcolor of the same color?
+
+    The transcription got the color right, the crop read corroborated it, and
+    reconcile_colors kept it -- wrapping it again would nest the command.
+    """
+    return (page_latex[:span[0]].endswith("\\textcolor{" + color + "}{")
+            and page_latex[span[1]:span[1] + 1] == "}")
+
+
+def _similar(a: str, b: str) -> bool:
+    """Do two readings refer to the same text? (Same fuzziness as _locate.)
+
+    The common text must cover most of BOTH readings: corroboration by
+    substring is how a real margin mark ("测度", green) vouched for a model's
+    invented green on body text that merely contained it ("的外测度").
+    """
+    if not a or not b:
+        return False
+    longest = max(len(a), len(b))
+    matcher = SequenceMatcher(None, a, b, autojunk=False)
+    block = max(matcher.get_matching_blocks(),
+                key=lambda b: b.size, default=None)
+    return block is not None and block.size >= 0.7 * longest
+
+
+def reconcile_colors(page_latex: str,
+                     reads: Dict[str, List[str]]) -> Tuple[str, int]:
+    """Unwrap the transcription's own \\textcolor runs the crop reads refute.
+
+    The whole-page transcription does not only DROP colors -- sometimes it
+    invents them. Real case: the green pen on the page was single margin
+    characters, and the model marked seven body statements green; every one
+    compiled, looked deliberate, and was wrong. So when a focused crop read
+    of a color's region SUCCEEDED, that read is the authority for the color:
+    a model run of that color whose text matches none of the read's runs is
+    unwrapped (the words stay, the color goes). Colors whose crop read failed
+    are left exactly as the model wrote them -- a flaky endpoint must not
+    cost colors that were right.
+
+    ``reads`` maps color -> the plain texts the crop reads marked in that
+    color; a color is only in the map when its region read out at all.
+    """
+    unwrapped = []
+
+    def maybe_unwrap(m: "re.Match[str]") -> str:
+        color, body = m.group(1), m.group(2)
+        if color in reads and not any(_similar(_plain(body), t)
+                                      for t in reads.get(color, [])):
+            unwrapped.append(color)
+            return body
+        return m.group(0)
+
+    out = _RUN.sub(maybe_unwrap, page_latex)
+    return out, len(unwrapped)
 
 
 def apply_color_runs(page_latex: str,
                      runs: List[Tuple[str, str]]) -> Tuple[str, int]:
     """Wrap the page's own text in \\textcolor where the runs' text is found.
 
-    Returns the new LaTeX and how many runs were applied. Unmatched runs are
-    skipped (and logged): better a missing color than a color on the wrong
-    words.
+    Returns the new LaTeX and how many runs were applied. Matching happens in
+    the page's ORIGINAL coordinates and the wraps are applied from the end, so
+    spans stay valid. Runs that cannot be placed are skipped (and logged):
+    better a missing color than a color on the wrong words.
     """
-    placed: List[Tuple[int, int]] = []
-    applied = 0
-    # Apply from the end so earlier spans keep their offsets.
-    found: List[Tuple[int, int, str]] = []
+    planned: List[Tuple[int, int, str]] = []   # (start, end, color)
+    anchors: List[Tuple[int, int]] = []        # spans of unambiguous runs
+    deferred: List[Tuple[str, str, List[Tuple[int, int]]]] = []
+
     for color, plain in runs:
-        span = _locate(page_latex, plain, placed)
-        if span is None:
-            log.info("color run not found in the page latex: %r", plain[:60])
+        occ = _occurrences(page_latex, plain)
+        if len(occ) == 1:
+            span = occ[0]
+        elif len(occ) > 1:
+            deferred.append((color, plain, occ))
             continue
-        placed.append(span)
-        found.append((span[0], span[1], color))
-        applied += 1
-    for start, end, color in sorted(found, reverse=True):
+        else:
+            span = _locate(page_latex, plain)
+            if span is None:
+                log.info("color run not found in the page latex: %r", plain[:60])
+                continue
+        if (_already_wrapped(page_latex, span, color)
+                or _overlaps(span, [(p0, p1) for p0, p1, _ in planned])):
+            continue
+        planned.append((*span, color))
+        anchors.append(span)
+
+    if deferred:
+        if anchors:
+            # The unambiguous runs say where the colored block sits; a term
+            # that also appears elsewhere (glossary words recur in the body)
+            # is colored at the occurrence nearest that.
+            centers = sorted((s + e) / 2 for s, e in anchors)
+            center = centers[len(centers) // 2]
+            for color, plain, occ in deferred:
+                # Occurrences the transcription already colored (and the read
+                # corroborated) are done; pick among the rest.
+                candidates = [sp for sp in occ
+                              if not _already_wrapped(page_latex, sp, color)]
+                if not candidates:
+                    continue
+                span = min(candidates,
+                           key=lambda sp: abs((sp[0] + sp[1]) / 2 - center))
+                if _overlaps(span, [(p0, p1) for p0, p1, _ in planned]):
+                    continue
+                planned.append((*span, color))
+        else:
+            for color, plain, occ in deferred:
+                log.info("color run is ambiguous with nothing to anchor it: %r",
+                         plain[:60])
+
+    for start, end, color in sorted(planned, key=lambda s: s[0], reverse=True):
         page_latex = (page_latex[:start]
                       + "\\textcolor{" + color + "}{" + page_latex[start:end] + "}"
                       + page_latex[end:])
-    return page_latex, applied
+    return page_latex, len(planned)

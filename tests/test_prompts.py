@@ -90,6 +90,8 @@ def test_the_prompt_teaches_margin_marks_and_strikethrough():
 def test_the_prompt_forbids_centering_a_corner_table():
     from n2lh.recognition.prompts import TRANSCRIBE_SYSTEM
     assert "corner of the page" in TRANSCRIBE_SYSTEM
+    assert "wraptable" in TRANSCRIBE_SYSTEM, \
+        "a corner table is floated beside the body, not centered or stacked"
 
 
 def test_doc_hint_block_names_the_files():
@@ -125,3 +127,16 @@ def test_the_prompt_keeps_corner_tables_and_forbids_invented_margin_numbers():
     from n2lh.recognition.prompts import TRANSCRIBE_SYSTEM
     assert "CORNER or the margin" in TRANSCRIBE_SYSTEM
     assert "do not continue the numbering pattern" in TRANSCRIBE_SYSTEM
+
+def test_the_preamble_loads_wrapfig():
+    """Corner tables are floated with wraptable; without the package the
+    document does not compile."""
+    from n2lh.recognition.prompts import PREAMBLE_TEX
+    assert "\\usepackage{wrapfig}" in PREAMBLE_TEX
+    assert "wrapfig" in PACKAGES
+
+
+def test_the_prompt_puts_the_title_before_any_corner_table():
+    from n2lh.recognition.prompts import TRANSCRIBE_SYSTEM
+    assert "comes FIRST in the transcription" in TRANSCRIBE_SYSTEM
+    assert "Never open the page with a table" in TRANSCRIBE_SYSTEM

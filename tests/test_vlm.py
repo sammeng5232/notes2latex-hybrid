@@ -201,3 +201,30 @@ def test_a_grayscale_page_gets_no_color_directive(monkeypatch, page_image):
     rec.transcribe(PageImage(index=1, path=page_image), "", [])
 
     assert "COLORED INK" not in captured["messages"][1]["content"][0]["text"]
+
+# ----------------------------------------------------- commentary stripping
+def test_a_commentary_line_is_not_part_of_the_page():
+    """A real run opened the document with 'Here is the transcription of the
+    page.' -- model bookends must not reach the compiled PDF."""
+    out = vlm_mod._extract_latex(
+        "Here is the transcription of the page.\n\n\\textbf{Title}")
+    assert out == "\\textbf{Title}"
+
+
+def test_a_closing_commentary_line_is_dropped_too():
+    out = vlm_mod._extract_latex(
+        "\\textbf{Title}\n\nLet me know if you want any changes.")
+    assert out == "\\textbf{Title}"
+
+
+def test_a_plain_first_line_of_notes_is_kept():
+    """Notes can legitimately start with plain words; only commentary naming
+    what it is handing over is dropped."""
+    out = vlm_mod._extract_latex("Here is my proof of theorem 3\n\n\\textbf{Q}")
+    assert out.startswith("Here is my proof")
+
+
+def test_chatter_inside_a_fence_is_stripped():
+    out = vlm_mod._extract_latex(
+        "```latex\nHere is the transcription of the page.\n\\textbf{T}\n```")
+    assert out == "\\textbf{T}"

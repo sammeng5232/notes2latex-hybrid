@@ -151,3 +151,51 @@ def insert_tabular(page_latex: str, table_latex: str, band: Tuple[int, int],
     if center < 1 / 3:
         return "\n\n".join([blocks[0], table] + blocks[1:]), True
     return "\n\n".join(blocks + [table]), True
+
+
+def wrap_corner_table(page_latex: str, run_texts: List[str]) -> Tuple[str, bool]:
+    """Move a corner table into a right-floating wraptable beside the body.
+
+    Color evidence says this table sat in a top corner of the page: its cells
+    carry the colored ink of a corner region. Whole-page transcriptions place
+    it anywhere -- stacked under the title on one pass, at the end of the page
+    on another -- because a corner table has no natural slot in linear LaTeX.
+    A wraptable right after the page's first block puts it back in the corner,
+    with the body text flowing beside it the way the page reads. A centered
+    title line directly above the table is taken along, un-centered.
+    """
+    if "wraptable" in page_latex:
+        return page_latex, False
+    texts = [t for t in run_texts if t]
+    if not texts:
+        return page_latex, False
+    match = next((m for m in TABULAR.finditer(page_latex)
+                  if any(t in m.group(0) for t in texts)), None)
+    if match is None:
+        return page_latex, False
+    start, end = match.start(), match.end()
+    # Absorb a \fitpage{...} wrapper around the tabular.
+    if (page_latex[:start].rstrip().endswith("\\fitpage{")
+            and page_latex[end:end + 1] == "}"):
+        start = page_latex.rfind("\\fitpage{", 0, start)
+        end += 1
+    # Absorb a centered title line directly above the table: it travels along,
+    # un-centered, but is not part of the table itself.
+    cut = start
+    header = ""
+    above = re.search(r"\\begin\{center\}\s*(.+?)\s*\\end\{center\}\s*$",
+                      page_latex[:cut], re.S)
+    if above:
+        header = above.group(1)
+        cut = above.start()
+    table = page_latex[start:end].strip()
+    rest = (page_latex[:cut] + page_latex[end:]).strip()
+    blocks = re.split(r"\n\s*\n", rest, maxsplit=1)
+    first = blocks[0] if blocks and blocks[0].strip() else ""
+    remainder = blocks[1] if len(blocks) > 1 else ""
+    wrapped = ("\\begin{wraptable}{r}{0.6\\textwidth}\n"
+               + (header + "\n" if header else "")
+               + table + "\n\\end{wraptable}")
+    out = ((first + "\n\n" if first else "") + wrapped
+           + ("\n\n" + remainder if remainder.strip() else ""))
+    return out, True

@@ -9,7 +9,7 @@ from PIL import Image, ImageDraw
 
 from n2lh.pipeline.graph import DocumentPipeline
 from n2lh.pipeline.tables import (crop_band, find_table_band, insert_tabular,
-                                  replace_tabular)
+                                  replace_tabular, wrap_corner_table)
 from n2lh.recognition.base import PageImage, Recognizer, TranscribeResult
 
 PAGE = (1000, 1400)
@@ -219,3 +219,60 @@ def test_a_failing_re_read_is_not_fatal(tmp_path):
 
     result = run_page(tmp_path, Boom(), ruled_page(tmp_path))
     assert "\\begin{tabular}" in result.tex     # the page's own table still stands
+
+# ------------------------------------------------- floating a corner table
+GLOSSARY = ("\\fitpage{\\begin{tabular}{ll}\n"
+            "振幅 & Oscillation \\\\\n"
+            "\\end{tabular}}")
+
+
+def test_wrap_corner_table_floats_the_tabular_after_the_first_block():
+    """Color evidence says the table sat in a top corner of the page; wherever
+    the transcription stacked it, it goes back to the corner, with the body
+    text flowing beside it."""
+    page = ("\\textbf{Title}\n\n"
+            "Body line one.\n\n" + GLOSSARY + "\n\n"
+            "Body line two.")
+    out, moved = wrap_corner_table(page, ["Oscillation"])
+    assert moved
+    assert out.index("Title") < out.index("wraptable") < out.index("Body line one")
+    assert out.index("Body line two") > out.index("wraptable")
+    assert "\\begin{wraptable}{r}{0.6\\textwidth}" in out
+    assert out.count("\\fitpage") == 1, "the tabular keeps its fitpage wrapper"
+
+
+def test_wrap_corner_table_takes_a_centered_header_along():
+    page = ("\\textbf{Title}\n\n"
+            "\\begin{center}\\textbf{中英词汇对照表}\\end{center}\n\n"
+            "\\begin{tabular}{ll}\n振幅 & Oscillation \\\\\n\\end{tabular}\n\n"
+            "Body.")
+    out, moved = wrap_corner_table(page, ["Oscillation"])
+    assert moved
+    assert "\\begin{center}" not in out, "a corner table is not centered"
+    assert out.index("wraptable") < out.index("中英词汇对照表"), \
+        "the header travels inside the wraptable"
+
+
+def test_wrap_corner_table_picks_the_tabular_the_runs_belong_to():
+    page = ("\\textbf{Title}\n\n"
+            "\\begin{tabular}{ll}\nfoo & bar \\\\\n\\end{tabular}\n\n"
+            "\\begin{tabular}{ll}\n振幅 & Oscillation \\\\\n\\end{tabular}\n\n"
+            "Body.")
+    out, moved = wrap_corner_table(page, ["Oscillation"])
+    assert moved
+    wrapped = out[out.index("wraptable"):out.index("\\end{wraptable}")]
+    assert "振幅" in wrapped and "foo" not in wrapped
+
+
+def test_wrap_corner_table_without_a_matching_tabular_changes_nothing():
+    page = "\\textbf{Title}\n\nBody."
+    out, moved = wrap_corner_table(page, ["Oscillation"])
+    assert not moved and out == page
+
+
+def test_wrap_corner_table_is_idempotent():
+    page = ("\\textbf{Title}\n\n\\begin{wraptable}{r}{0.6\\textwidth}\n"
+            "\\begin{tabular}{ll}\n振幅 & Oscillation \\\\\n\\end{tabular}\n"
+            "\\end{wraptable}\n\nBody.")
+    out, moved = wrap_corner_table(page, ["Oscillation"])
+    assert not moved and out == page

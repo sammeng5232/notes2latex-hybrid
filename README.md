@@ -22,11 +22,11 @@ Both parents transcribe *words and math*. Everything below was built here:
 
 | Capability | What it does | Where the parents stop |
 |---|---|---|
-| **Colored ink** | Ingestion detects colored pen (saturation **and** ink darkness, so tinted paper/JPEG noise do not count) and keeps the page in RGB; each colored region is density-clustered, cropped and re-read with a color-only prompt; the returned `\textcolor` runs are fuzzily merged into the page's own LaTeX — the crop contributes the color, never the content | Colors are simply lost (this pipeline's own grayscale ingestion used to lose them too) |
+| **Colored ink** | Ingestion detects colored pen (saturation **and** ink darkness, so tinted paper/JPEG noise do not count) and keeps the page in RGB; each colored region is density-clustered, cropped **with the black ink whitened out**, and re-read with a color-only prompt; the returned `\textcolor` runs are fuzzily merged into the page's own LaTeX — anchored so a term that recurs in the body is colored only in the colored block — and the transcription's own runs of a read-out color are kept only when the read corroborates them, so invented colors are unwrapped. The crop contributes the color, never the content | Colors are simply lost (this pipeline's own grayscale ingestion used to lose them too) |
 | **The file name as a reading hint** | The upload's name is appended to the system prompt; hard-to-read names and titles prefer its spelling (周民强 was read as 周兆庆 on one pass and 周美玲 on another) | Neither uses metadata it already has |
 | **Table re-read + dropped-table recovery** | A ruled table is re-read from an enlarged crop (resolution, not comprehension, is the limit); a table the transcription *dropped entirely* is read from its crop and put back | Dropped or mis-read table content stays wrong |
 | **Figures as pictures** | Hand-drawn figures are located (dedicated request, then measured) and cropped from the page image | The model is asked to redraw them (TikZ) or skips them |
-| **Layout fidelity** | Margin columns (circled section numbers, status characters, ticks) are transcribed inline — never dropped, never continued by invention; a corner table is not centered; strike-throughs become `\cancel` | Only the body text survives |
+| **Layout fidelity** | The title comes first; margin columns (circled section numbers, status characters, ticks) are transcribed inline — never dropped, never continued by invention; a corner table is floated beside the body text as a `wraptable`, never stacked under the title or centered; strike-throughs become `\cancel`; model bookends ("Here is the transcription...") never reach the PDF | Only the body text survives |
 | **CJK without configuration** | The first page with Chinese switches the whole job to XeLaTeX + `ctex`, keeping the chosen paper and font size | Chinese pages cannot compile |
 | **Deterministic autofix layer** | Bare `&`, unclosed environments, math-only blocks in text mode, narrow column specs, raw Unicode math, text-mode subscripts, multi-paragraph `\textcolor` → `{\color …}` group — all fixed mechanically before any model repair | Repair is model-only |
 | **Desktop app** | Frozen single-file exe, job store with SSE progress, cancel, auto-save, review pane | Script / notebook |
@@ -217,21 +217,36 @@ still gets the old, small grayscale file). Anything written in colored pen
 should become `\textcolor{<color>}{...}` (`xcolor` is in the preamble), a
 colored underline stays an underline, and a strike-through is `\cancel{...}`
 colored as the ink that struck it. Because the whole-page transcription of a
-dense page reliably drops ink color -- three prompt shapes could not change
-that, on any page -- colored ink also gets the table treatment: ingestion
-finds *where* the colored ink is (density clustering, no model call), each
-colored region is cropped and re-read with a color-only prompt, and the runs
-that come back are merged into the page's own LaTeX, fuzzily matched (two
-readings of the same handwriting differ). The merge may only wrap text that is
-already in the transcription: the crop read contributes the color, never the
-content. On the page that prompted this, it put seven pink runs back onto a
-vocabulary table's English column that had come out black.
+dense page is unreliable about color in *both* directions -- it drops the
+colors that are there (three prompt shapes could not change that) and invents
+ones that are not (a real run marked seven body statements green when the
+green pen had only written single margin characters) -- colored ink gets the
+table treatment: ingestion finds *where* the colored ink is (density
+clustering, no model call), each colored region is cropped **with everything
+but the colored ink whitened** (the margin marks sit right on the beginnings
+of the body lines, so a plain crop would show the model black words to mark
+colored), and re-read with a color-only prompt. The runs that come back are
+merged into the page's own LaTeX, fuzzily matched (two readings of the same
+handwriting differ); a run whose text occurs more than once -- a glossary term
+is exactly a word that also appears in the body -- is only colored where the
+unambiguous runs anchor the colored block. The merge may only wrap text that
+is already in the transcription: the crop read contributes the color, never
+the content. And the read adjudicates in the other direction too: the
+transcription's own colored runs of a color whose region read out are kept
+only when the read corroborates them, so invented colors are unwrapped (the
+words stay, the color goes). On the page that prompted this, it put the pink
+runs back onto a vocabulary table's cells, kept them off the body's own
+mentions of those same terms, and unwrapped the invented green.
 
-**Layout.** A margin column (circled section numbers, single status
-characters, ticks and crosses) is transcribed inline where it stands beside
-the body -- never dropped, never gathered into a list, and never *continued*:
-if the page numbers six sections ①-⑥, later items carry no circled number. A
-table sitting in a corner of the page is not wrapped in `\begin{center}`.
+**Layout.** The page's title comes first, before any corner table beside it. A
+margin column (circled section numbers, single status characters, ticks and
+crosses) is transcribed inline where it stands beside the body -- never
+dropped, never gathered into a list, and never *continued*: if the page
+numbers six sections ①-⑥, later items carry no circled number. A table
+sitting in a corner of the page is floated, not stacked and not centered:
+color evidence says its cells are the colored corner block, so it is re-emitted
+as a right-floating `wraptable` right after the page's first block, with the
+body text flowing beside it the way the page reads.
 (On the summary page that prompted this, the left margin held ①-⑥ with
 极/难/可/必 marks -- all silently missing from the first output -- and the
 top-right vocabulary table came out centered under the title on one pass and

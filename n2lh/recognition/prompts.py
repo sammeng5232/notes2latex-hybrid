@@ -15,6 +15,7 @@ _PREAMBLE_TEMPLATE = r"""\documentclass[__CLASSOPTS__]{article}
 \usepackage{cancel}
 \usepackage{xcolor}
 \usepackage{graphicx}   % hand-drawn figures cropped from the page image
+\usepackage{wrapfig}    % corner tables float beside the body text, as on the page
 % Figures live in <output>/figures. Per-page compiles run one or two levels deeper
 % (pages/.compile-pNNNN for jobs, .pages/.compile-pNNNN for the CLI), so search all.
 \graphicspath{{figures/}{../../figures/}{../../out/figures/}}
@@ -98,7 +99,7 @@ TABLES - a summary table is where content goes missing
 - A cell contains exactly what is written in it, even when the column heading leads you to expect something else. If the M(t) column of one row actually holds a covariance and a correlation, transcribe those - do NOT supply the moment generating function that "should" be there. Writing a formula the page does not contain is the worst thing you can do: it is correct-looking and undetectable.
 - A cell often holds several formulas separated by commas. Read to the right-hand edge of every cell and transcribe all of them, not just the first.
 - Keep the author's subscripts: x_i, x_j stays x_i, x_j and must not be renumbered to x_1, x_2.
-- A table can sit in a CORNER or the margin of the page, beside or above the body text (a vocabulary list, a summary box). It is still a table and still content: transcribe all of its rows and columns where it appears in reading order -- never drop it for being off to the side, and never wrap it in \begin{center} unless it is centered on the page.
+- A table can sit in a CORNER or the margin of the page, beside or above the body text (a vocabulary list, a summary box). It is still a table and still content: transcribe all of its rows and columns where it appears in reading order -- never drop it for being off to the side. A corner table goes in a wraptable (see LAYOUT); a table is centered only if it is centered on the page.
 
 FORMATTING - reproduce how the page looks
 - Underlined text -> \underline{...}. Underlined words, terms being defined and headings are common; do not drop underlines.
@@ -110,10 +111,11 @@ FORMATTING - reproduce how the page looks
 - A label that opens a statement - Def. Defn. Thm. Cor. Lem. Prop. Pf. Eg. Ex. Rmk. Note. Claim. - and the parenthetical naming it -> bold, including the punctuation: \textbf{Def.}, \textbf{Thm (Poincare duality).}, \textbf{Pf.}. A lecture heading such as "Lecture 9 20251109 Week 12" -> \textbf{Lecture 9 20251109 Week 12} on its own line.
 
 LAYOUT - keep content where the page puts it
+- The page's own title at the top (course, author, topic - usually the largest text) is content and comes FIRST in the transcription, before any table or box that sits in a corner beside it. Never open the page with a table.
 - A margin column - a narrow band down one side of the page holding circled numbers, single status characters, ticks or crosses beside the body text - is content, not decoration. Transcribe each margin mark inline at the point of the body it stands beside, e.g. \textbf{② 难} where its section starts. Never drop margin marks, and never gather them into a separate list of their own.
 - Transcribe only the margin marks that are actually there. If the page numbers six sections ① to ⑥, the items after the sixth carry no circled number: do not continue the numbering pattern yourself, and do not renumber the body's own labels to match.
 - Text struck through by a stroke -> \cancel{...}, colored as the ink that struck it: \textcolor{red}{\cancel{②}}.
-- A table or boxed block sitting in a corner of the page beside body text is NOT centered: transcribe it without \begin{center}, at the point in reading order where the surrounding text reaches it, and keep transcribing the body text that runs beside it - do not move that text all above or below the table.
+- A table or boxed block sitting in a corner of the page beside body text is a floating table: emit it as \begin{wraptable}{r}{0.55\textwidth} ... \end{wraptable} at the point in reading order where the surrounding text first reaches it (right after the heading it hangs beside), and keep transcribing the body text that runs beside it - do not move that text all above or below the table, do not stack the table between the title and the body, and do not wrap it in \begin{center}.
 
 FIGURES - do NOT redraw them
 - Never draw a figure with TikZ or an array. For every hand-drawn picture, graph, sketch or arrow/commutative diagram, put one line \figbox{x0}{y0}{x1}{y1} where the figure appears in reading order.
@@ -229,7 +231,7 @@ def transcribe_user_prompt(context_tail: str, open_environments: List[str],
 
 
 PACKAGES = ("amsmath, amssymb, amsthm, mathtools, mathrsfs, bm, bbm, cancel, xcolor, "
-            "graphicx, tikz, tikz-cd, pgfplots")
+            "graphicx, wrapfig, tikz, tikz-cd, pgfplots")
 
 # Plain-language hints for the compile errors seen most in real runs. Handwritten
 # notes use "&" for "and" all the time (16 of 25 first-attempt failures on a
