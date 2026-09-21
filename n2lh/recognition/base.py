@@ -46,6 +46,15 @@ class Recognizer(abc.ABC):
         """
         return None
 
+    def transcribe_colors(self, image_path, names: Optional[List[str]] = None) -> Optional[str]:
+        """LaTeX for the colored content of a crop, with \\textcolor runs, or
+        None.
+
+        Optional: an engine that cannot do a focused color pass returns None
+        and the page keeps whatever colors its own transcription marked.
+        """
+        return None
+
     def locate_figures(self, page: PageImage) -> Optional[List[Tuple[int, int, int, int]]]:
         """Accurate figure boxes for ``page`` as ``(x0, y0, x1, y1)`` in 0..1000
         (relative to the image, origin top-left), or None if this engine cannot

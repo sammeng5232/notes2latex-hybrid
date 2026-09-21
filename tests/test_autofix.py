@@ -232,3 +232,36 @@ def test_the_chinese_page_that_failed_after_the_engine_switch():
 ])
 def test_scripts_already_in_math_or_escaped_are_untouched(src):
     assert fix(src) == (src, [])
+
+
+# ---------------------------------------------------- multi-paragraph textcolor
+def test_a_textcolor_spanning_a_blank_line_becomes_a_color_group():
+    src = ("\\textcolor{magenta}{\n中英词汇对照表\n\nCantor 闭集套定理 \\hfill Closed nested "
+           "sets theorem\n}")
+    out, changes = fix(src)
+    assert out == ("{\\color{magenta}\n中英词汇对照表\n\nCantor 闭集套定理 \\hfill Closed nested "
+                   "sets theorem\n}")
+    assert changes and "multi-paragraph" in changes[0]
+
+
+def test_a_single_paragraph_textcolor_is_left_alone():
+    src = "keep \\textcolor{red}{this} exactly"
+    out, changes = fix(src)
+    assert out == src and changes == []
+
+
+def test_the_rewrite_keeps_braces_balanced_with_nested_textcolor():
+    src = "\\textcolor{pink}{a\n\nb \\textcolor{blue}{c} d\n\ne}"
+    out, _ = fix(src)
+    assert out.startswith("{\\color{pink}")
+    assert out.endswith("e}")
+    assert "\\textcolor{blue}{c}" in out
+    assert out.count("{") == out.count("}")
+
+
+def test_an_unterminated_textcolor_is_left_to_the_general_pass():
+    # No matching close brace: nothing safe to rewrite, the token pass will
+    # report the imbalance instead.
+    src = "\\textcolor{red}{unterminated..."
+    out, changes = fix(src)
+    assert "{\\color" not in out or "unterminated" in out

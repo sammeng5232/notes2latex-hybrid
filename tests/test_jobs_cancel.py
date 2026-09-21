@@ -43,7 +43,8 @@ class SlowEngine(Recognizer):
 
 def test_cancel_stops_a_running_job_and_keeps_partial_output(tmp_path: Path, monkeypatch):
     engine = SlowEngine()
-    monkeypatch.setattr(jobs_mod, "build_engines", lambda settings: (engine, None))
+    monkeypatch.setattr(jobs_mod, "build_engines",
+                        lambda settings, doc_hint="": (engine, None))
     store = JobStore(tmp_path / "data")
     mgr = JobManager(store, Settings(engine="heuristic", data_dir=str(tmp_path / "data")))
 

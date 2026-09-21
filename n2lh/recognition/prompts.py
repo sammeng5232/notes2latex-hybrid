@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from typing import List
+from typing import List, Optional
 
 _PREAMBLE_TEMPLATE = r"""\documentclass[__CLASSOPTS__]{article}
 \usepackage[__GEOMETRY__]{geometry}
@@ -98,14 +98,22 @@ TABLES - a summary table is where content goes missing
 - A cell contains exactly what is written in it, even when the column heading leads you to expect something else. If the M(t) column of one row actually holds a covariance and a correlation, transcribe those - do NOT supply the moment generating function that "should" be there. Writing a formula the page does not contain is the worst thing you can do: it is correct-looking and undetectable.
 - A cell often holds several formulas separated by commas. Read to the right-hand edge of every cell and transcribe all of them, not just the first.
 - Keep the author's subscripts: x_i, x_j stays x_i, x_j and must not be renumbered to x_1, x_2.
+- A table can sit in a CORNER or the margin of the page, beside or above the body text (a vocabulary list, a summary box). It is still a table and still content: transcribe all of its rows and columns where it appears in reading order -- never drop it for being off to the side, and never wrap it in \begin{center} unless it is centered on the page.
 
 FORMATTING - reproduce how the page looks
 - Underlined text -> \underline{...}. Underlined words, terms being defined and headings are common; do not drop underlines.
+- COLORED INK is part of the note: red and blue pens mark corrections, emphasis and status. When text, an underline, a strike, a box or a margin mark is written in colored ink, wrap exactly that content in \textcolor{<color>}{...} with a standard color name (red, green, blue, cyan, magenta, yellow, brown, lime, olive, orange, pink, purple, teal, violet, gray). A colored underline is still an underline: \textcolor{red}{\underline{Riemann integrable}}. Black ink gets no \textcolor. Never invent a color that is not on the page, and never drop one that is: the color is information (red often marks corrections and crossed-out work, blue the terms being defined). A \textcolor argument must NOT contain a blank line: color a multi-paragraph block as {\color{<name>} ... } or as one \textcolor per paragraph.
 - Text visibly centered on the page (titles, cover-page lines) -> \begin{center} ... \end{center}, one handwritten line per line, separated by \\.
 - Text written larger than the body text -> a size command: \LARGE for a page title, \Large for a heading, \large for a subheading, e.g. {\Large Topology of Manifolds}. Never use size commands for ordinary text.
 - A standalone heading such as "Manifolds with Boundaries" -> \subsection*{...} (keep \underline{} if it is underlined).
 - \textbf{...} for bold, \textit{...} for italic, itemize/enumerate for bulleted or numbered lists.
 - A label that opens a statement - Def. Defn. Thm. Cor. Lem. Prop. Pf. Eg. Ex. Rmk. Note. Claim. - and the parenthetical naming it -> bold, including the punctuation: \textbf{Def.}, \textbf{Thm (Poincare duality).}, \textbf{Pf.}. A lecture heading such as "Lecture 9 20251109 Week 12" -> \textbf{Lecture 9 20251109 Week 12} on its own line.
+
+LAYOUT - keep content where the page puts it
+- A margin column - a narrow band down one side of the page holding circled numbers, single status characters, ticks or crosses beside the body text - is content, not decoration. Transcribe each margin mark inline at the point of the body it stands beside, e.g. \textbf{② 难} where its section starts. Never drop margin marks, and never gather them into a separate list of their own.
+- Transcribe only the margin marks that are actually there. If the page numbers six sections ① to ⑥, the items after the sixth carry no circled number: do not continue the numbering pattern yourself, and do not renumber the body's own labels to match.
+- Text struck through by a stroke -> \cancel{...}, colored as the ink that struck it: \textcolor{red}{\cancel{②}}.
+- A table or boxed block sitting in a corner of the page beside body text is NOT centered: transcribe it without \begin{center}, at the point in reading order where the surrounding text reaches it, and keep transcribing the body text that runs beside it - do not move that text all above or below the table.
 
 FIGURES - do NOT redraw them
 - Never draw a figure with TikZ or an array. For every hand-drawn picture, graph, sketch or arrow/commutative diagram, put one line \figbox{x0}{y0}{x1}{y1} where the figure appears in reading order.
@@ -127,6 +135,20 @@ Output ONLY the tabular environment: no preamble, no surrounding text, no commen
 TABLE_USER = (
     "This is a crop of one table from a page of handwritten mathematics notes. "
     "Transcribe the whole table as a single LaTeX tabular, every row and every column."
+)
+
+COLOR_SYSTEM = r"""You transcribe a crop of handwritten notes that contains COLORED ink.
+Output ONLY the LaTeX for the crop's text: no preamble, no commentary, no code fences.
+- Wrap each run of text written in a colored pen in \textcolor{<color>}{...} with a standard color name (red, green, blue, cyan, magenta, yellow, brown, lime, olive, orange, pink, purple, teal, violet).
+- Content written in black or gray ink gets NO \textcolor, even inside this crop.
+- Copy the text exactly as written; keep Chinese as Chinese.
+- An underline stays \underline{...}, a strike-through is \cancel{...}, each colored as the ink that drew it.
+- You have no tools and no functions: never emit function calls, XML or JSON. Answer in LaTeX only.
+"""
+
+COLOR_USER = (
+    "This crop shows the part of a page that carries {names} ink. "
+    "Transcribe the crop, marking exactly the colored content."
 )
 
 LOCATE_SYSTEM = (
@@ -157,8 +179,40 @@ FIX_SYSTEM = (
 )
 
 
-def transcribe_user_prompt(context_tail: str, open_environments: List[str]) -> str:
+def doc_hint_block(filenames: List[str]) -> str:
+    """System-prompt addendum naming the uploaded files ('' when there are none).
+
+    A handwritten name or title is small, stylised and genuinely ambiguous: on
+    a real page the author 周民强 came out as 周兆庆 on one pass and 周美玲 on
+    another. The file the user uploaded was named 实变函数_周民强_总结.pdf -- the
+    correct spelling was available all along. Names, titles and subject terms
+    that are hard to read should prefer the file name's reading.
+    """
+    if not filenames:
+        return ""
+    shown = ", ".join(f'"{n}"' for n in filenames[:5])
+    return (
+        "\n\nSOURCE FILE\n"
+        f"- These notes were uploaded as {shown}. A name, title or subject written "
+        "on the page (an author, a book, a course, a topic) is often the same words "
+        "as in this file name. When such a word is hard to read in the handwriting, "
+        "prefer the reading that matches the file name."
+    )
+
+
+def transcribe_user_prompt(context_tail: str, open_environments: List[str],
+                           color_ink: Optional[List[str]] = None) -> str:
     parts = ["Transcribe this page to LaTeX body content."]
+    if color_ink:
+        names = " and ".join(color_ink)
+        parts.append(
+            f"COLORED INK IS PRESENT ON THIS PAGE: image analysis of the scan found "
+            f"{names} ink. It is on the page right now - look for it: colored text, "
+            "underlines, strikes, boxes and margin marks in those colors. Every one of "
+            "them must reach your output as \\textcolor{<color>}{...} (a strike-through "
+            "is \\textcolor{<color>}{\\cancel{...}}), as the system prompt describes. "
+            "A page with colored ink whose transcription contains no \\textcolor has "
+            "silently dropped the colors.")
     if context_tail.strip():
         parts.append(
             "The document so far ends with:\n```latex\n" + context_tail.strip() + "\n```"
@@ -197,6 +251,10 @@ _HINTS = [
     (re.compile(r"Unicode character"),
      "pdflatex cannot typeset raw Unicode symbols: write \\forall, \\exists, \\in, \\nmid, "
      "\\mathbb{R}, \\alpha ... as LaTeX macros inside math."),
+    (re.compile(r"Paragraph ended before \\@?textcolor"),
+     "\\textcolor{c}{...} may not contain a blank line. Color a multi-paragraph "
+     "block with the group form {\\color{c} ... }, or give each paragraph its own "
+     "\\textcolor."),
     (re.compile(r"macro parameter character #"),
      "A literal # must be written `\\#`."),
     (re.compile(r"Environment [\w*-]+ undefined"),

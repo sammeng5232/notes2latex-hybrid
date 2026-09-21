@@ -8,7 +8,8 @@ from typing import List, Optional
 from PIL import Image, ImageDraw
 
 from n2lh.pipeline.graph import DocumentPipeline
-from n2lh.pipeline.tables import crop_band, find_table_band, replace_tabular
+from n2lh.pipeline.tables import (crop_band, find_table_band, insert_tabular,
+                                  replace_tabular)
 from n2lh.recognition.base import PageImage, Recognizer, TranscribeResult
 
 PAGE = (1000, 1400)
@@ -113,6 +114,36 @@ def test_nothing_happens_without_a_table_on_either_side():
     assert replace_tabular("x\n" + TABLE, "the model returned prose")[1] is False
 
 
+# ------------------------------------------------------- putting one back
+def test_a_dropped_table_is_inserted_after_the_title_block():
+    """A corner vocabulary table vanished from one transcription entirely; the
+    crop re-read must be able to put it back, right after the first block."""
+    page = "\\begin{center}\\Large Title\\end{center}\n\nDef. a summary."
+    out, inserted = insert_tabular(page, BETTER, (100, 400), 1400)
+    assert inserted
+    assert out.split("\n\n")[0].startswith("\\begin{center}")
+    assert "head1" in out and "Def. a summary." in out
+    assert "\\fitpage{" in out
+    assert "begin{center}" not in out.split("\n\n")[1]   # the table is not centered
+
+
+def test_a_dropped_table_low_on_the_page_joins_the_end():
+    page = "First.\n\nSecond."
+    out, inserted = insert_tabular(page, BETTER, (900, 1300), 1400)
+    assert inserted
+    assert out.endswith("\\end{tabular}}") or out.rstrip().endswith("}")
+    assert out.split("\n\n")[-2] == "Second."             # reading order kept
+
+
+def test_insertion_into_empty_latex_just_places_the_table():
+    out, inserted = insert_tabular("", BETTER, (100, 400), 1400)
+    assert inserted and out.startswith("\\fitpage{")
+
+
+def test_insertion_requires_a_tabular_in_the_re_read():
+    assert insert_tabular("x", "the model returned prose", (100, 400), 1400)[1] is False
+
+
 # ------------------------------------------------------ through the pipeline
 class TableRecognizer(Recognizer):
     """Transcribes the page badly and the cropped table well, like the real one."""
@@ -149,6 +180,23 @@ def test_a_page_with_a_table_is_re_read_once_and_the_better_table_wins(tmp_path)
     result = run_page(tmp_path, rec, ruled_page(tmp_path))
     assert "and more" in result.tex
     assert len(rec.table_calls) == 1, "the table must not be re-read per attempt"
+
+
+def test_a_table_the_transcription_dropped_is_read_and_inserted(tmp_path):
+    """The whole failure this fixes: the page HAS a ruled table, the model's
+    whole-page transcription omitted it, and the old code only re-read tables
+    the transcription already mentioned."""
+    class DroppingRecognizer(TableRecognizer):
+        def transcribe(self, page, context_tail, open_environments, guidance=None):
+            # No label words: bold_labels would rewrite them and confuse the
+            # position assertion below.
+            return TranscribeResult(latex="Some notes without a table.", engine=self.name)
+
+    rec = DroppingRecognizer()
+    result = run_page(tmp_path, rec, ruled_page(tmp_path))
+    assert "head1" in result.tex, "the dropped table was not put back"
+    assert result.tex.index("Some notes without a table.") < result.tex.index("head1")
+    assert len(rec.table_calls) == 1
 
 
 def test_a_page_without_a_table_costs_no_extra_call(tmp_path):

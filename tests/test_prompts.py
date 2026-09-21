@@ -66,3 +66,62 @@ def test_the_repair_prompt_also_forbids_it():
 def test_the_quantifier_glossary_is_still_there():
     from n2lh.recognition.prompts import TRANSCRIBE_SYSTEM
     assert "\\forall" in TRANSCRIBE_SYSTEM and "upside-down A" in TRANSCRIBE_SYSTEM
+
+
+# ------------------------------------------------------- colored ink and layout
+def test_the_prompt_teaches_colored_ink():
+    """Real failure: red strikes and blue underlines were on the page, but the
+    model was never told colors are content, so none reached the output."""
+    from n2lh.recognition.prompts import TRANSCRIBE_SYSTEM
+    assert "\\textcolor" in TRANSCRIBE_SYSTEM
+    assert "colored ink" in TRANSCRIBE_SYSTEM.lower()
+    assert "never drop one that is" in TRANSCRIBE_SYSTEM.lower()
+
+
+def test_the_prompt_teaches_margin_marks_and_strikethrough():
+    """Real failure: a margin column of circled section numbers with 极/难/可/必
+    marks was dropped entirely, and red-struck marks with it."""
+    from n2lh.recognition.prompts import TRANSCRIBE_SYSTEM
+    body = TRANSCRIBE_SYSTEM.lower()
+    assert "margin" in body and "never drop margin marks" in body
+    assert "\\cancel" in TRANSCRIBE_SYSTEM
+
+
+def test_the_prompt_forbids_centering_a_corner_table():
+    from n2lh.recognition.prompts import TRANSCRIBE_SYSTEM
+    assert "corner of the page" in TRANSCRIBE_SYSTEM
+
+
+def test_doc_hint_block_names_the_files():
+    from n2lh.recognition.prompts import doc_hint_block
+    hint = doc_hint_block(["实变函数_周民强_总结.pdf"])
+    assert "实变函数_周民强_总结.pdf" in hint
+    assert "file name" in hint
+    assert doc_hint_block([]) == ""
+
+
+def test_doc_hint_block_caps_the_number_of_files():
+    from n2lh.recognition.prompts import doc_hint_block
+    hint = doc_hint_block([f"notes-{i}.pdf" for i in range(9)])
+    assert "notes-5.pdf" not in hint and "notes-4.pdf" in hint
+
+
+def test_the_user_prompt_names_the_detected_colors():
+    """A generic 'mind the colors' line in the system prompt was ignored; the
+    per-page directive must name what image analysis actually found."""
+    from n2lh.recognition.prompts import transcribe_user_prompt
+    prompt = transcribe_user_prompt("", [], color_ink=["pink", "green"])
+    assert "pink and green" in prompt
+    assert "\\textcolor" in prompt and "\\cancel" in prompt
+    assert "COLORED INK IS PRESENT" in prompt
+
+
+def test_the_user_prompt_is_silent_without_colors():
+    from n2lh.recognition.prompts import transcribe_user_prompt
+    assert "COLORED INK" not in transcribe_user_prompt("", [], color_ink=[])
+
+
+def test_the_prompt_keeps_corner_tables_and_forbids_invented_margin_numbers():
+    from n2lh.recognition.prompts import TRANSCRIBE_SYSTEM
+    assert "CORNER or the margin" in TRANSCRIBE_SYSTEM
+    assert "do not continue the numbering pattern" in TRANSCRIBE_SYSTEM

@@ -39,7 +39,7 @@ import httpx
 from PIL import Image
 
 from n2lh.recognition.base import PageImage, Recognizer, TranscribeResult
-from n2lh.recognition.prompts import (TABLE_SYSTEM, TABLE_USER,
+from n2lh.recognition.prompts import (COLOR_SYSTEM, COLOR_USER, TABLE_SYSTEM, TABLE_USER,
     FIX_SYSTEM,
     LOCATE_SYSTEM,
     LOCATE_USER,
@@ -211,7 +211,8 @@ class VLMRecognizer(Recognizer):
                  timeout: int = 600, max_image_edge: int = _MAX_IMAGE_EDGE,
                  use_proxy: bool = False, stall_timeout: float = 120,
                  retries: int = 2, retry_backoff: float = 2.0,
-                 thinking: str = "off", max_output_chars: int = 24000) -> None:
+                 thinking: str = "off", max_output_chars: int = 24000,
+                 doc_hint: str = "") -> None:
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.api_key = api_key
@@ -230,6 +231,10 @@ class VLMRecognizer(Recognizer):
         # Ceiling on one page's answer text (real ones are ~1-5k chars).
         self.max_output_chars = max_output_chars
         self.max_image_edge = max_image_edge
+        # Appended to the system prompt; see prompts.doc_hint_block. The uploaded
+        # file's name often spells the very words that are hardest to read
+        # (an author's name in a title), and the recognizer cannot know it.
+        self.doc_hint = doc_hint
         # A system-wide HTTPS_PROXY (e.g. Clash Verge) makes httpx tunnel the
         # request; campus/proxied endpoints often drop that TLS handshake with
         # UNEXPECTED_EOF_WHILE_READING. Direct-first, proxy as explicit opt-in.
@@ -250,11 +255,12 @@ class VLMRecognizer(Recognizer):
                    open_environments: List[str],
                    guidance: Optional[str] = None) -> TranscribeResult:
         if guidance:
-            system = FIX_SYSTEM
+            system = FIX_SYSTEM + self.doc_hint
             user = guidance
         else:
-            system = TRANSCRIBE_SYSTEM
-            user = transcribe_user_prompt(context_tail, open_environments)
+            system = TRANSCRIBE_SYSTEM + self.doc_hint
+            user = transcribe_user_prompt(context_tail, open_environments,
+                                          color_ink=self._page_color_ink(page))
         content = self._chat(system, user, page.path)
         latex = _extract_latex(content)
         return TranscribeResult(latex=latex, engine=self.name,
@@ -265,6 +271,28 @@ class VLMRecognizer(Recognizer):
         text = self._chat(TABLE_SYSTEM, TABLE_USER, image_path)
         latex = _extract_latex(text)
         return latex if "begin{tabular}" in latex else None
+
+    def transcribe_colors(self, image_path, names: Optional[List[str]] = None) -> Optional[str]:
+        """Read the colored ink of a crop. See n2lh/pipeline/colors.py for why."""
+        joined = " and ".join(names) if names else "colored"
+        text = self._chat(COLOR_SYSTEM, COLOR_USER.format(names=joined), image_path)
+        latex = _extract_latex(text)
+        return latex if "\\textcolor" in latex else None
+
+    def _page_color_ink(self, page: PageImage) -> Optional[List[str]]:
+        """Colored-ink families on this page, for the per-page prompt directive.
+
+        Ingestion already decided whether to keep color; this asks the same
+        analysis what the colors were, so the directive can name them. The
+        recognizer layer normally must not reach into the pipeline package, but
+        the figures locator already crosses that line the same way.
+        """
+        try:
+            from n2lh.pipeline.ingest import color_ink_names
+            with Image.open(page.path) as img:
+                return color_ink_names(img)
+        except Exception:  # noqa: BLE001 - a hint, never worth failing a page for
+            return None
 
     def locate_figures(self, page: PageImage) -> Optional[List[tuple]]:
         """One dedicated request for accurate figure boxes (0..1000, top-left origin).

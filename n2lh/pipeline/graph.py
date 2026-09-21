@@ -25,14 +25,16 @@ from PIL import Image
 
 from n2lh.compiler.latex import CompileResult, LatexCompiler
 from n2lh.pipeline.assembler import build_document
+from n2lh.pipeline.colors import apply_color_runs, extract_color_runs
 from n2lh.pipeline.context import ContextWindow, EnvironmentTracker
 from n2lh.pipeline.autofix import autofix_latex
 from n2lh.pipeline.cjk import add_cjk, engine_for, has_cjk
 from n2lh.pipeline.figures import render_figures
+from n2lh.pipeline.ingest import colored_ink_regions
 from n2lh.pipeline.layout import tidy_layout
 from n2lh.pipeline.sanitize import comment_out, sanitize_body
 from n2lh.pipeline.style import bold_labels
-from n2lh.pipeline.tables import crop_band, find_table_band, replace_tabular
+from n2lh.pipeline.tables import crop_band, find_table_band, insert_tabular, replace_tabular
 from n2lh.recognition.base import PageImage, Recognizer, TranscribeResult
 from n2lh.recognition.prompts import PREAMBLE_TEX, fix_user_prompt
 
@@ -132,7 +134,8 @@ class DocumentPipeline:
         self.preamble = preamble or PREAMBLE_TEX
         self._figures_dir: Optional[Path] = None   # set per run(): <outdir>/figures
         self._tables_read: set = set()   # a page's table is re-read at most once
-        self._cjk = False               # switched on by the first page of CJK
+        self._color_runs: Dict = {}      # page index -> colored runs read from crops
+        self._cjk = False                # switched on by the first page of CJK
         self.compiler = compiler
         self.fixer = fixer          # engine used for log-guided repair passes
         self.max_retries = max(1, max_retries + 1)  # total attempts per page
@@ -477,6 +480,7 @@ class DocumentPipeline:
                                    locator=lambda: self._locate(page))
         self._use_cjk_if_needed(latex)
         latex = self._reread_table(page, latex)
+        latex = self._apply_colors(page, latex)
         latex, bolded = bold_labels(latex)
         if bolded:
             log.debug("page %d: bolded %d label(s)", page.index, bolded)
@@ -509,13 +513,18 @@ class DocumentPipeline:
 
         A table is the one thing a whole-page transcription reliably gets wrong,
         because the page is downscaled before it is sent and the cells stop being
-        legible; see n2lh/pipeline/tables.py. Each page is re-read at most once.
+        legible; see n2lh/pipeline/tables.py. Two cases:
+
+        - the transcription has the table: swap it for the crop's (more pixels);
+        - the transcription DROPPED it (real case: a corner vocabulary table
+          was missing entirely from one pass, present from another): read it
+          from the crop and put it back.
+
+        Each page is re-read at most once.
         """
         reread = getattr(self.recognizer, "transcribe_table", None)
-        if (reread is None or "begin{tabular}" not in latex
-                or page.index in self._tables_read or self._cancelled()):
+        if (reread is None or page.index in self._tables_read or self._cancelled()):
             return latex
-        self._tables_read.add(page.index)
         try:
             with Image.open(page.path) as opened:
                 image = opened.convert("RGB")
@@ -523,16 +532,80 @@ class DocumentPipeline:
             band = find_table_band(dark)
             if band is None:
                 return latex
+            self._tables_read.add(page.index)
             crop = crop_band(image, band, page.path.parent / f".table-p{page.index:04d}.png")
             table = _call_with_deadline(lambda: reread(crop),
                                         self._call_budget(self.recognizer))
             if not table:
                 return latex
-            latex, swapped = replace_tabular(latex, table)
-            if swapped:
-                log.info("page %d: table re-read from a crop", page.index)
+            if "begin{tabular}" in latex:
+                latex, swapped = replace_tabular(latex, table)
+                if swapped:
+                    log.info("page %d: table re-read from a crop", page.index)
+            else:
+                latex, inserted = insert_tabular(latex, table, band, dark.size[1])
+                if inserted:
+                    log.info("page %d: table missing from the transcription; "
+                             "re-read from a crop and inserted", page.index)
         except Exception as exc:  # noqa: BLE001 - the page's own table still stands
             log.warning("page %d: could not re-read the table: %s", page.index, exc)
+        return latex
+
+    def _apply_colors(self, page: PageImage, latex: str) -> str:
+        """Put colored ink back via a focused re-read of the colored regions.
+
+        The whole-page transcription reliably drops ink color (see
+        n2lh/pipeline/colors.py), so when the page carries color and the
+        transcription has no \\textcolor, each colored region is cropped,
+        re-read with a color-only prompt, and the returned runs are merged
+        into this page's own LaTeX. The runs are read once per page and
+        cached: a repair pass re-merges them against its own latex for free.
+        Best-effort throughout -- a failed or empty re-read leaves the page
+        exactly as it was.
+        """
+        if "\\textcolor" in latex or self._cancelled():
+            return latex
+        reread = getattr(self.recognizer, "transcribe_colors", None)
+        if reread is None:
+            return latex
+        try:
+            runs = self._color_runs.get(page.index)
+            if runs is None:
+                runs = []
+                with Image.open(page.path) as opened:
+                    image = opened.convert("RGB")
+                for i, (box, names) in enumerate(colored_ink_regions(image)):
+                    # Each region is best-effort on its own: one flaky crop
+                    # read (the endpoint sometimes answers nothing but a
+                    # tool_calls finish) must not cost the other regions.
+                    try:
+                        crop = image.crop(box)
+                        # Enlarged so the crop survives the client's 1600px
+                        # downscale, exactly like the table crop.
+                        if crop.width < 2400:
+                            scale = 2400 / crop.width
+                            crop = crop.resize((2400, max(1, int(crop.height * scale))),
+                                               Image.LANCZOS)
+                        crop_path = page.path.parent / f".colors-p{page.index:04d}-{i}.png"
+                        crop.save(crop_path, "PNG")
+                        read = _call_with_deadline(
+                            lambda cp=crop_path, ns=names: reread(cp, ns),
+                            self._call_budget(self.recognizer))
+                        if read:
+                            runs.extend(extract_color_runs(read))
+                    except Exception as exc:  # noqa: BLE001 - one region only
+                        log.warning("page %d: colored region %d not re-read: %s",
+                                    page.index, i, exc)
+                self._color_runs[page.index] = runs
+            if not runs:
+                return latex
+            latex, n = apply_color_runs(latex, runs)
+            if n:
+                log.info("page %d: %d colored run(s) applied from crop re-reads",
+                         page.index, n)
+        except Exception as exc:  # noqa: BLE001 - colors are best-effort
+            log.warning("page %d: could not re-read the colored ink: %s",
+                        page.index, exc)
         return latex
 
     def _locate(self, page: PageImage):

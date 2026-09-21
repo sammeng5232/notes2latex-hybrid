@@ -15,11 +15,12 @@ from n2lh.pipeline.graph import DocumentPipeline
 from n2lh.pipeline.ingest import ingest_files
 from n2lh.recognition.base import PageImage, Recognizer
 from n2lh.recognition.heuristic import HeuristicRecognizer
+from n2lh.recognition.prompts import doc_hint_block
 from n2lh.recognition.vlm import VLMRecognizer
 from n2lh.store import JobStore
 
 
-def build_engines(settings: Settings) -> "tuple[Recognizer, Optional[Recognizer]]":
+def build_engines(settings: Settings, doc_hint: str = "") -> "tuple[Recognizer, Optional[Recognizer]]":
     """Return (primary, fixer) per the engine mode.
 
     - heuristic: offline skeleton engine, self-fixing (safe mode). No API.
@@ -27,6 +28,9 @@ def build_engines(settings: Settings) -> "tuple[Recognizer, Optional[Recognizer]
     - hybrid: offline primary (TrOCR checkpoint if configured, else heuristic)
       with a VLM reserved for repairs/escalation -- API tokens are spent only
       on pages that fail local processing.
+
+    ``doc_hint`` (see prompts.doc_hint_block) names the uploaded files to the
+    VLM so hard-to-read names prefer the file name's spelling.
     """
     vlm = None
     if settings.vlm_ready:
@@ -35,7 +39,8 @@ def build_engines(settings: Settings) -> "tuple[Recognizer, Optional[Recognizer]
                             use_proxy=settings.vlm_use_proxy,
                             stall_timeout=settings.vlm_stall_timeout,
                             retries=settings.vlm_retries,
-                            thinking=settings.vlm_thinking)
+                            thinking=settings.vlm_thinking,
+                            doc_hint=doc_hint)
 
     if settings.engine == "vlm":
         if vlm is None:
@@ -120,7 +125,11 @@ class JobManager:
         store.append_event(job_id, {"type": "ingested", "pages": len(page_paths)})
 
         cancel = self._cancels.setdefault(job_id, threading.Event())
-        primary, fixer = build_engines(self.settings)
+        # The upload's own name (e.g. 实变函数_周民强_总结.pdf) often spells the
+        # words that are hardest to read off the page; tell the recognizer.
+        job = store.get(job_id) or {}
+        doc_hint = doc_hint_block(job.get("filenames") or [])
+        primary, fixer = build_engines(self.settings, doc_hint=doc_hint)
         # Let "Cancel" abort an in-flight request instead of waiting it out.
         for engine in (primary, fixer):
             if engine is not None and hasattr(engine, "cancel_event"):

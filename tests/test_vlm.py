@@ -109,3 +109,95 @@ def test_probe_vlm_reports_status(monkeypatch):
         probe_vlm("https://example.invalid/api", "default")
     assert "404" in str(exc.value)
     assert "Model not found" in str(exc.value)
+
+
+def test_doc_hint_reaches_the_system_prompt(monkeypatch, page_image):
+    """The uploaded file's name must reach the model: a handwritten author name
+    is genuinely ambiguous (周民强 was read as 周兆庆 and 周美玲 on different
+    passes), and the file name spells it out."""
+    from n2lh.recognition.base import PageImage
+    from n2lh.recognition.prompts import TRANSCRIBE_SYSTEM
+
+    captured = {}
+
+    def fake_stream(client, url, payload, headers):
+        captured.update(payload)
+        return "```latex\nx\n```"
+
+    hint = '\n\nSOURCE FILE\n- These notes were uploaded as "notes.pdf".'
+    rec = VLMRecognizer("https://example.invalid/api", "m", retries=0, doc_hint=hint)
+    monkeypatch.setattr(rec, "_client_for", lambda: object())
+    monkeypatch.setattr(rec, "_stream_once", fake_stream)
+    rec.transcribe(PageImage(index=1, path=page_image), "", [])
+
+    system = captured["messages"][0]["content"]
+    assert system.startswith(TRANSCRIBE_SYSTEM.splitlines()[0])
+    assert "SOURCE FILE" in system and "notes.pdf" in system
+
+
+def test_doc_hint_also_reaches_repair_passes(monkeypatch, page_image):
+    from n2lh.recognition.base import PageImage
+
+    captured = {}
+
+    def fake_stream(client, url, payload, headers):
+        captured.update(payload)
+        return "```latex\nx\n```"
+
+    rec = VLMRecognizer("https://example.invalid/api", "m", retries=0,
+                        doc_hint='\n\nSOURCE FILE\n- "notes.pdf"')
+    monkeypatch.setattr(rec, "_client_for", lambda: object())
+    monkeypatch.setattr(rec, "_stream_once", fake_stream)
+    rec.transcribe(PageImage(index=1, path=page_image), "", [],
+                   guidance="fix this page")
+
+    assert "notes.pdf" in captured["messages"][0]["content"]
+
+
+def test_a_colored_page_gets_the_color_directive(monkeypatch, tmp_path):
+    """The page's own detected colors must reach the user prompt: a title in
+    magenta and green pen came out black before the directive existed."""
+    from n2lh.recognition.base import PageImage
+
+    path = tmp_path / "colored.png"
+    img = Image.new("RGB", (400, 600), (255, 255, 255))
+    px = img.load()
+    for x in range(50, 350):           # a magenta title stroke
+        for y in range(50, 62):
+            px[x, y] = (255, 78, 225)
+    for x in range(50, 350):           # a green one beside it
+        for y in range(80, 90):
+            px[x, y] = (91, 164, 128)
+    img.save(path, "PNG")
+
+    captured = {}
+
+    def fake_stream(client, url, payload, headers):
+        captured.update(payload)
+        return "```latex\nx\n```"
+
+    rec = VLMRecognizer("https://example.invalid/api", "m", retries=0)
+    monkeypatch.setattr(rec, "_client_for", lambda: object())
+    monkeypatch.setattr(rec, "_stream_once", fake_stream)
+    rec.transcribe(PageImage(index=1, path=path), "", [])
+
+    user = captured["messages"][1]["content"][0]["text"]
+    assert "COLORED INK IS PRESENT" in user
+    assert "pink" in user and "green" in user
+
+
+def test_a_grayscale_page_gets_no_color_directive(monkeypatch, page_image):
+    from n2lh.recognition.base import PageImage
+
+    captured = {}
+
+    def fake_stream(client, url, payload, headers):
+        captured.update(payload)
+        return "```latex\nx\n```"
+
+    rec = VLMRecognizer("https://example.invalid/api", "m", retries=0)
+    monkeypatch.setattr(rec, "_client_for", lambda: object())
+    monkeypatch.setattr(rec, "_stream_once", fake_stream)
+    rec.transcribe(PageImage(index=1, path=page_image), "", [])
+
+    assert "COLORED INK" not in captured["messages"][1]["content"][0]["text"]

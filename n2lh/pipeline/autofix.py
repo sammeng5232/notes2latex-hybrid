@@ -14,6 +14,9 @@ page bounced between ``&``, ``aligned`` outside math mode and an unclosed
 * a bare ``#``  -> ``\\#``
 * raw Unicode math characters (``∤ ∀ ∈ ℝ α ...``), which pdflatex rejects
   ("Unicode character ... not set up for use with LaTeX")  -> the macro
+* ``\\textcolor{c}{...}`` whose argument spans a blank line, which LaTeX
+  rejects ("Paragraph ended before \\@textcolor was complete")  -> the
+  equivalent ``{\\color{c}...}`` group, which may span paragraphs
 
 The scan is a single left-to-right pass over LaTeX tokens with an environment
 stack and a small math-mode state. It is deliberately conservative: it only
@@ -146,6 +149,34 @@ def _skip_group(s: str, i: int) -> Optional[int]:
     return None
 
 
+# \textcolor{c}{  (the first thing a model told to mark colored ink does is
+# color a whole multi-paragraph block of the page, blank lines included)
+_TEXTCOLOR = re.compile(r"\\textcolor\s*\{\s*(\w+)\s*\}\s*\{")
+
+
+def _textcolor_across_paragraphs(latex: str) -> Tuple[str, int]:
+    """``\\textcolor{c}{...}`` whose argument has a blank line -> ``{\\color{c}...}``.
+
+    xcolor's two-argument form may not contain a paragraph break, so such a
+    page fails with "Paragraph ended before \\@textcolor was complete". The
+    group form colors exactly the same content and may span paragraphs, and
+    the rewrite keeps every brace where it was: the argument's opening brace
+    becomes the group's, its closing brace already closes the group.
+    """
+    edits: List[Tuple[int, int, str]] = []
+    for m in _TEXTCOLOR.finditer(latex):
+        open_brace = m.end() - 1
+        close = _skip_group(latex, open_brace)
+        if close is None:
+            continue
+        if re.search(r"\n\s*\n", latex[open_brace + 1:close - 1]):
+            edits.append((m.start(), open_brace + 1,
+                          "{\\color{" + m.group(1) + "}"))
+    for start, end, repl in reversed(edits):
+        latex = latex[:start] + repl + latex[end:]
+    return latex, len(edits)
+
+
 def _spec_columns(spec: str) -> Optional[int]:
     """Number of columns a tabular/array spec declares; None if it is too exotic to count."""
     i = n = 0
@@ -238,6 +269,7 @@ class _State:
 def autofix_latex(latex: str) -> Tuple[str, List[str]]:
     """Return ``(fixed_latex, changes)``; ``changes`` is empty when nothing was wrong."""
     original = latex
+    latex, n_color = _textcolor_across_paragraphs(latex)
     latex, n_cols = _widen_columns(latex)
     escape_hash = not _DEFINES_MACROS.search(latex)
     st = _State()
@@ -360,6 +392,8 @@ def autofix_latex(latex: str) -> Tuple[str, List[str]]:
         changes.append(f"wrapped {n_wrap} math-only block(s) in \\[ \\]")
     if n_cols:
         changes.append(f"widened {n_cols} array/tabular column spec(s)")
+    if n_color:
+        changes.append(f"turned {n_color} multi-paragraph \\textcolor into a \\color group")
     if n_uni:
         changes.append(f"replaced {n_uni} unsupported Unicode symbol(s)")
     return ("".join(out) if changes else original), changes

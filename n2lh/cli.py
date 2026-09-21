@@ -55,6 +55,7 @@ def _convert(args: argparse.Namespace) -> int:
     from n2lh.pipeline.graph import DocumentPipeline
     from n2lh.pipeline.ingest import ingest_files
     from n2lh.recognition.base import PageImage
+    from n2lh.recognition.prompts import doc_hint_block
     
     settings = load_settings(Path("data"))
     overrides = {
@@ -68,7 +69,8 @@ def _convert(args: argparse.Namespace) -> int:
     settings.apply_dict({k: v for k, v in overrides.items() if v is not None})
 
     try:
-        primary, fixer = build_engines(settings)
+        primary, fixer = build_engines(
+            settings, doc_hint=doc_hint_block([Path(p).name for p in args.inputs]))
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2

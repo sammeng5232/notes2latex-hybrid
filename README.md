@@ -16,6 +16,21 @@ invoked only as a *repair/escalation* engine when a page fails to compile — so
 are spent on the hard pages, not the whole notebook. With a local VLM endpoint
 (Ollama / vLLM / LM Studio) the entire pipeline runs with zero cloud exposure.
 
+## Beyond both parents
+
+Both parents transcribe *words and math*. Everything below was built here:
+
+| Capability | What it does | Where the parents stop |
+|---|---|---|
+| **Colored ink** | Ingestion detects colored pen (saturation **and** ink darkness, so tinted paper/JPEG noise do not count) and keeps the page in RGB; each colored region is density-clustered, cropped and re-read with a color-only prompt; the returned `\textcolor` runs are fuzzily merged into the page's own LaTeX — the crop contributes the color, never the content | Colors are simply lost (this pipeline's own grayscale ingestion used to lose them too) |
+| **The file name as a reading hint** | The upload's name is appended to the system prompt; hard-to-read names and titles prefer its spelling (周民强 was read as 周兆庆 on one pass and 周美玲 on another) | Neither uses metadata it already has |
+| **Table re-read + dropped-table recovery** | A ruled table is re-read from an enlarged crop (resolution, not comprehension, is the limit); a table the transcription *dropped entirely* is read from its crop and put back | Dropped or mis-read table content stays wrong |
+| **Figures as pictures** | Hand-drawn figures are located (dedicated request, then measured) and cropped from the page image | The model is asked to redraw them (TikZ) or skips them |
+| **Layout fidelity** | Margin columns (circled section numbers, status characters, ticks) are transcribed inline — never dropped, never continued by invention; a corner table is not centered; strike-throughs become `\cancel` | Only the body text survives |
+| **CJK without configuration** | The first page with Chinese switches the whole job to XeLaTeX + `ctex`, keeping the chosen paper and font size | Chinese pages cannot compile |
+| **Deterministic autofix layer** | Bare `&`, unclosed environments, math-only blocks in text mode, narrow column specs, raw Unicode math, text-mode subscripts, multi-paragraph `\textcolor` → `{\color …}` group — all fixed mechanically before any model repair | Repair is model-only |
+| **Desktop app** | Frozen single-file exe, job store with SSE progress, cancel, auto-save, review pane | Script / notebook |
+
 ## Architecture
 
 ```
@@ -65,8 +80,12 @@ when done.
 
 - **VLM (easiest quality):** Settings -> VLM base URL + model. This install defaults to the
   opencode-configured provider (`https://scrp-chat.econ.cuhk.edu.hk/api`) with
-  **`qwen3.6-35b-1`** -- probed and verified as Vision + Text + Reasoning
-  (`qwen3.6-35b-2` is the alternate; `glm-5.3`/`glm-5.2` there are text-only).
+  **`Qwen/Qwen3.6-35B-A3B-FP8`** — probed and verified as Vision + Text + Reasoning.
+  Caution: the endpoint's own `/api/models` metadata can *lie* about vision —
+  `glm-5.3-2` advertises `vision=true` but routes to the text-only `zai-org/GLM-5.3`
+  deployment (instant `400: not a multimodal model` on every page), and
+  `glm-5.3-1`/`glm-5.2`/`openai/gpt-oss-120b` are text-only too. Verify a model
+  with a tiny image ping before trusting its metadata.
   API credentials were copied from opencode's `auth.json` via
   `scripts/configure_from_opencode.py` into the app's settings.json
   (source `data\` and frozen `%LOCALAPPDATA%\notes2latex-hybrid\data\`).
@@ -192,6 +211,39 @@ notation glossary tells it that a handwritten `∀` (an upside-down A) is
 `\forall` and not a `v`/`V` -- "Vp ∈ M" is `\forall p \in M`. (An underscore in
 the handwriting is an underline; a literal `_` in the notes is escaped as
 `\_`.)
+
+**Colored ink.** Pages are rasterized **in color** (a page with no colored ink
+still gets the old, small grayscale file). Anything written in colored pen
+should become `\textcolor{<color>}{...}` (`xcolor` is in the preamble), a
+colored underline stays an underline, and a strike-through is `\cancel{...}`
+colored as the ink that struck it. Because the whole-page transcription of a
+dense page reliably drops ink color -- three prompt shapes could not change
+that, on any page -- colored ink also gets the table treatment: ingestion
+finds *where* the colored ink is (density clustering, no model call), each
+colored region is cropped and re-read with a color-only prompt, and the runs
+that come back are merged into the page's own LaTeX, fuzzily matched (two
+readings of the same handwriting differ). The merge may only wrap text that is
+already in the transcription: the crop read contributes the color, never the
+content. On the page that prompted this, it put seven pink runs back onto a
+vocabulary table's English column that had come out black.
+
+**Layout.** A margin column (circled section numbers, single status
+characters, ticks and crosses) is transcribed inline where it stands beside
+the body -- never dropped, never gathered into a list, and never *continued*:
+if the page numbers six sections ①-⑥, later items carry no circled number. A
+table sitting in a corner of the page is not wrapped in `\begin{center}`.
+(On the summary page that prompted this, the left margin held ①-⑥ with
+极/难/可/必 marks -- all silently missing from the first output -- and the
+top-right vocabulary table came out centered under the title on one pass and
+dropped entirely on the next. The ruled-table re-read (below) now also covers
+the dropped case: when the page has a ruled table the transcription never
+mentioned, it is read from the crop and put back.)
+
+**The file name is a hint.** A handwritten name in a title is genuinely
+ambiguous -- the author 周民强 of `实变函数_周民强_总结.pdf` was read as 周兆庆
+on one pass and 周美玲 on another. The name of the uploaded file is appended
+to the system prompt, and hard-to-read names, titles and subjects prefer the
+file name's spelling.
 
 **Mechanical auto-repair.** When a page fails to compile, a deterministic pass
 (`n2lh/pipeline/autofix.py`) runs *before* asking the model to fix it: it

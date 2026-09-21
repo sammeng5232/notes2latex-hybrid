@@ -117,10 +117,37 @@ def replace_tabular(page_latex: str, table_latex: str) -> Tuple[str, bool]:
     if not old or not new:
         return page_latex, False
     # One row of slack: the crop sometimes omits the header row, which is a
-    # formatting difference rather than lost content. Losing more than that is a
-    # truncated read and a worse answer than the page's own.
+    # formatting difference rather than lost content. Losing more than that is
+    # a truncated read and a worse answer than the page's own.
     if _rows(new.group(0)) < _rows(old.group(0)) - 1:
         log.info("table re-read has %d rows against the page's %d; keeping the page's",
                  _rows(new.group(0)), _rows(old.group(0)))
         return page_latex, False
     return page_latex[:old.start()] + new.group(0) + page_latex[old.end():], True
+
+
+def insert_tabular(page_latex: str, table_latex: str, band: Tuple[int, int],
+                   page_height: int) -> Tuple[str, bool]:
+    """Put back a table the transcription dropped entirely.
+
+    Real case: a vocabulary table in the top-right corner of a summary page
+    came out missing on one pass and present on another -- the whole-page
+    transcription is simply not reliable about side content. The crop re-read
+    is. Position: a table whose band sits in the top third of the page goes
+    right after the transcription's first block (that is where a corner table
+    hangs, next to the title); anything lower joins the end of the page, in
+    reading order. The table is wrapped in \\fitpage so a wide one cannot run
+    off the page, and deliberately NOT centered: it sat in a corner, not in
+    the middle of the page.
+    """
+    new = TABULAR.search(table_latex)
+    if not new:
+        return page_latex, False
+    table = "\\fitpage{" + new.group(0) + "}"
+    blocks = [b for b in re.split(r"\n\s*\n", page_latex.strip()) if b.strip()]
+    if not blocks:
+        return table, True
+    center = (band[0] + band[1]) / 2 / max(page_height, 1)
+    if center < 1 / 3:
+        return "\n\n".join([blocks[0], table] + blocks[1:]), True
+    return "\n\n".join(blocks + [table]), True
