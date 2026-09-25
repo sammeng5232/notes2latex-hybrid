@@ -202,6 +202,124 @@ def test_a_grayscale_page_gets_no_color_directive(monkeypatch, page_image):
 
     assert "COLORED INK" not in captured["messages"][1]["content"][0]["text"]
 
+
+# ----------------------------------------------------------------- strips
+def _sent_image_size(payload):
+    import base64
+    url = next(part["image_url"]["url"] for part in payload["messages"][1]["content"]
+               if part.get("type") == "image_url")
+    data = base64.b64decode(url.split(",", 1)[1])
+    with Image.open(io.BytesIO(data)) as im:
+        return im.size
+
+
+def _capturing(monkeypatch, rec, answer="```latex\nx\n```"):
+    captured = []
+
+    def fake_stream(client, url, payload, headers):
+        captured.append(payload)
+        return answer
+
+    monkeypatch.setattr(rec, "_client_for", lambda: object())
+    monkeypatch.setattr(rec, "_stream_once", fake_stream)
+    return captured
+
+
+def test_a_strip_is_sent_at_its_own_resolution_not_the_page_limit(monkeypatch, tmp_path):
+    """The whole point of a strip: the page limit (1600px) made dense handwriting
+    illegible. The limit is per call; the client's own setting is shared by
+    concurrent calls and must not change."""
+    path = tmp_path / "strip.png"
+    Image.new("L", (3508, 600), 255).save(path, "PNG")
+    rec = VLMRecognizer("https://example.invalid/api", "m", retries=0)
+    captured = _capturing(monkeypatch, rec)
+    rec.transcribe_strip(path, 2, 6, max_edge=3600)
+    assert _sent_image_size(captured[0]) == (3508, 600)
+    assert rec.max_image_edge == 1600
+
+    from n2lh.recognition.base import PageImage
+    rec.transcribe(PageImage(index=1, path=path), "", [])
+    assert max(_sent_image_size(captured[1])) == 1600
+
+
+def test_a_strip_is_told_what_it_is(monkeypatch, tmp_path):
+    path = tmp_path / "strip.png"
+    Image.new("L", (800, 100), 255).save(path, "PNG")
+    rec = VLMRecognizer("https://example.invalid/api", "m", retries=0,
+                        doc_hint='\n\nSOURCE FILE\n- "notes.pdf"')
+    captured = _capturing(monkeypatch, rec)
+    rec.transcribe_strip(path, 1, 6, max_edge=3600, context_tail="previous page")
+    rec.transcribe_strip(path, 5, 6, max_edge=3600, context_tail="previous page")
+    first, fifth = captured
+    assert "strip 1 of 6" in first["messages"][1]["content"][0]["text"]
+    assert "previous page" in first["messages"][1]["content"][0]["text"]
+    user5 = fifth["messages"][1]["content"][0]["text"]
+    assert "strip 5 of 6" in user5 and "previous page" not in user5
+    assert "not the top of the page" in user5
+    # the file-name hint only settles the spelling of the title, which is on top
+    assert "notes.pdf" in first["messages"][0]["content"]
+    assert "notes.pdf" not in fifth["messages"][0]["content"]
+
+
+def test_a_strip_is_never_given_the_colored_ink_directive(monkeypatch, tmp_path):
+    """With it, the real endpoint answered strips with garbage from the first
+    token on 13 of 13 requests; without it the same strips read cleanly."""
+    path = tmp_path / "strip.png"
+    img = Image.new("RGB", (400, 100), (255, 255, 255))
+    px = img.load()
+    for x in range(50, 350):
+        for y in range(40, 52):
+            px[x, y] = (91, 164, 128)          # green
+    img.save(path, "PNG")
+    rec = VLMRecognizer("https://example.invalid/api", "m", retries=0)
+    captured = _capturing(monkeypatch, rec)
+    rec.transcribe_strip(path, 2, 3, max_edge=3600, page_colors=["green", "pink"])
+    assert "COLORED INK" not in captured[0]["messages"][1]["content"][0]["text"]
+
+
+def test_a_re_read_of_a_strip_is_sampled_differently(monkeypatch, tmp_path):
+    path = tmp_path / "strip.png"
+    Image.new("L", (400, 100), 255).save(path, "PNG")
+    rec = VLMRecognizer("https://example.invalid/api", "m", retries=0)
+    captured = _capturing(monkeypatch, rec)
+    rec.transcribe_strip(path, 1, 2, max_edge=3600)
+    rec.transcribe_strip(path, 1, 2, max_edge=3600, variant=1)
+    assert captured[0]["temperature"] == 0.1
+    assert captured[1]["temperature"] > 0.1
+
+
+def test_a_text_only_repair_attaches_no_image(monkeypatch):
+    from n2lh.recognition.prompts import FIX_SYSTEM
+    rec = VLMRecognizer("https://example.invalid/api", "m", retries=0)
+    captured = _capturing(monkeypatch, rec, "```latex\nfixed\n```")
+    out = rec.repair_text("fix this")
+    assert out.latex == "fixed"
+    content = captured[0]["messages"][1]["content"]
+    assert [part["type"] for part in content] == ["text"]
+    assert captured[0]["messages"][0]["content"].startswith(FIX_SYSTEM.splitlines()[0])
+
+
+def test_a_retry_is_reported_to_the_caller(monkeypatch, tmp_path):
+    from n2lh.recognition.vlm import VLMTransientError
+    path = tmp_path / "strip.png"
+    Image.new("L", (400, 100), 255).save(path, "PNG")
+    rec = VLMRecognizer("https://example.invalid/api", "m", retries=2)
+    answers = [VLMTransientError("looped"), "```latex\nok\n```"]
+
+    def fake_stream(client, url, payload, headers):
+        answer = answers.pop(0)
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    monkeypatch.setattr(rec, "_client_for", lambda: object())
+    monkeypatch.setattr(rec, "_stream_once", fake_stream)
+    monkeypatch.setattr(rec, "_sleep", lambda seconds: None)
+    seen = []
+    out = rec.transcribe_strip(path, 1, 2, max_edge=3600,
+                               on_retry=lambda attempt, error: seen.append((attempt, error)))
+    assert out == "ok" and seen == [(1, "looped")]
+
 # ----------------------------------------------------- commentary stripping
 def test_a_commentary_line_is_not_part_of_the_page():
     """A real run opened the document with 'Here is the transcription of the

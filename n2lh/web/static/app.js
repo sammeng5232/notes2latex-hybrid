@@ -252,6 +252,12 @@ function fmtEvent(ev) {
   else if (ev.type === "ingested") { msg = `${ev.pages} page(s) ingested`; }
   else if (ev.type === "prefetch_start") { msg = `transcribing ${ev.total} pages in parallel (${ev.workers} workers)...`; }
   else if (ev.type === "prefetched") { cls = ev.ok ? "" : "ev-warn"; msg = `page ${ev.page}: prefetched (${ev.done}/${ev.total})${ev.ok ? "" : " - failed, will retry live: " + String(ev.error).slice(0, 80)}`; }
+  else if (ev.type === "strips_planned") { msg = `page ${ev.page}: dense page - reading it as ${ev.strips} full-resolution strips${ev.cached ? ` (${ev.cached} already read)` : ""}`; }
+  else if (ev.type === "strip_done") { msg = `page ${ev.page}: strip ${ev.strip}/${ev.strips} read (${ev.seconds}s)`; }
+  else if (ev.type === "strip_retry") { cls = "ev-warn"; msg = `page ${ev.page}: strip ${ev.strip}/${ev.strips} retrying (attempt ${ev.attempt}): ${String(ev.error).slice(0, 80)}`; }
+  else if (ev.type === "strip_reread") { cls = "ev-warn"; msg = `page ${ev.page}: strip ${ev.strip}/${ev.strips} reading again from an adjusted image (${String(ev.reason).slice(0, 90)})`; }
+  else if (ev.type === "strip_doubtful") { cls = "ev-warn"; msg = `page ${ev.page}: strip ${ev.strip}/${ev.strips} kept its best read, which ${String(ev.reason).slice(0, 90)} - check it against the page`; }
+  else if (ev.type === "strip_unreadable") { cls = "ev-bad"; msg = `page ${ev.page}: strip ${ev.strip}/${ev.strips} could not be read (${String(ev.error).slice(0, 80)}); a marked gap is left in its place`; }
   else if (ev.type === "transcribed") { msg = `page ${ev.page}: transcribed (${ev.engine}, attempt ${ev.attempt})`; }
   else if (ev.type === "page_start") { msg = `page ${ev.page}: starting`; }
   else if (ev.type === "job_error") { cls = "ev-bad"; msg = `job error: ${String(ev.error).slice(0, 140)}`; }

@@ -33,7 +33,7 @@ import socket
 import threading
 import time
 import zlib
-from typing import List, Optional, Union
+from typing import Callable, List, Optional, Sequence, Union
 
 import httpx
 from PIL import Image
@@ -45,6 +45,7 @@ from n2lh.recognition.prompts import (COLOR_SYSTEM, COLOR_USER, TABLE_SYSTEM, TA
     LOCATE_USER,
     TRANSCRIBE_SYSTEM,
     fix_user_prompt,
+    strip_user_prompt,
     transcribe_user_prompt,
 )
 
@@ -279,6 +280,61 @@ class VLMRecognizer(Recognizer):
         latex = _extract_latex(text)
         return latex if "\\textcolor" in latex else None
 
+    # A dense page can be read as full-resolution strips: see n2lh/pipeline/tiles.py.
+    reads_strips = True
+
+    def transcribe_strip(self, image_path, index: int, total: int, *, max_edge: int,
+                         context_tail: str = "", open_environments: Sequence[str] = (),
+                         page_colors: Optional[Sequence[str]] = None,
+                         on_retry: Optional[Callable[[int, str], None]] = None,
+                         variant: int = 0) -> str:
+        """Transcribe one horizontal strip of a page at ``max_edge``.
+
+        The strip prompt says what the image is -- strip k of n, full width -- so
+        the page-level layout rules do not make the model invent a title or an
+        opening for strip 5. The file-name hint goes with the first strip only:
+        it is there to settle how a name in the title is spelled, and the title
+        is in the first strip.
+
+        No colored-ink directive, whatever ``page_colors`` says: with it, the
+        real endpoint answered strips of the 实变函数 sheet with garbage from the
+        first token ("elielieli bird eli pipe...", "0 ן ں ksétiwift 0 1 2 2 2")
+        on 13 of 13 requests; the same strips without it read cleanly. Colors
+        are put back by the page-level colored-region reads instead.
+
+        ``variant`` > 0 is a re-read: a slightly higher temperature, so it is not
+        a replay of the answer being replaced (identical requests came back with
+        identical skipped lines).
+        """
+        system = TRANSCRIBE_SYSTEM + (self.doc_hint if index == 1 else "")
+        user = strip_user_prompt(index, total, context_tail, list(open_environments))
+        text = self._chat(system, user, image_path, max_edge=max_edge, on_retry=on_retry,
+                          temperature=min(0.7, 0.1 + 0.25 * variant) if variant else None,
+                          retry_runaway=False)
+        return _extract_latex(text)
+
+    def repair_text(self, guidance: str) -> TranscribeResult:
+        """Fix compile errors from the LaTeX alone, without an image.
+
+        For a page that was read as full-resolution strips, the only image this
+        client could attach is the whole page at 1600px -- the picture that is
+        too small to read and that the model filled in from memory. The errors
+        are syntax errors, and the LaTeX is the authoritative content, so the
+        repair gets no picture to be tempted by.
+        """
+        content = self._chat(FIX_SYSTEM, guidance, None)
+        return TranscribeResult(latex=_extract_latex(content), engine=self.name,
+                                notes="repair pass (text only)")
+
+    def _color_ink(self, image_path) -> Optional[List[str]]:
+        """Colored-ink families in an image file (page or strip)."""
+        try:
+            from n2lh.pipeline.ingest import color_ink_names
+            with Image.open(image_path) as img:
+                return color_ink_names(img)
+        except Exception:  # noqa: BLE001 - a hint, never worth failing a page for
+            return None
+
     def _page_color_ink(self, page: PageImage) -> Optional[List[str]]:
         """Colored-ink families on this page, for the per-page prompt directive.
 
@@ -334,16 +390,35 @@ class VLMRecognizer(Recognizer):
         if self.cancel_event is not None and self.cancel_event.is_set():
             raise VLMError("cancelled")
 
-    def _chat(self, system: str, user_text: str, image_path) -> str:
+    def _chat(self, system: str, user_text: str, image_path, *,
+              max_edge: Optional[int] = None,
+              on_retry: Optional[Callable[[int, str], None]] = None,
+              temperature: Optional[float] = None,
+              retry_runaway: bool = True) -> str:
+        """One request, retried on transient failures.
+
+        ``max_edge`` overrides the longest edge the image is sent at for this call
+        only -- a strip of a dense page goes out at full resolution while every
+        other request on the same instance keeps the default (the instance is
+        shared by concurrent calls, so the attribute must not be changed).
+        ``image_path=None`` sends text alone: a repair of LaTeX read from
+        full-resolution strips must not be shown the illegible whole page.
+        ``on_retry(attempt, error)`` is told before each retry, which is
+        otherwise silent to the pipeline. ``retry_runaway=False`` gives up on a
+        runaway loop at once: for a strip, the pipeline re-reads a perturbed copy
+        instead, since this endpoint loops again on an identical request.
+        """
         client = self._client_for()
+        content: List[dict] = [{"type": "text", "text": user_text}]
+        if image_path is not None:
+            content.append({"type": "image_url", "image_url": {
+                "url": _data_uri(image_path, max_edge or self.max_image_edge)}})
         messages = [
             {"role": "system", "content": system},
-            {"role": "user", "content": [
-                {"type": "text", "text": user_text},
-                {"type": "image_url", "image_url": {"url": _data_uri(image_path, self.max_image_edge)}},
-            ]},
+            {"role": "user", "content": content},
         ]
-        payload = {"model": self.model, "temperature": 0.1, "messages": messages, "stream": True}
+        payload = {"model": self.model, "temperature": 0.1 if temperature is None else temperature,
+                   "messages": messages, "stream": True}
         headers = {"Authorization": f"Bearer {self.api_key or 'none'}"}
         url = f"{self.base_url}/chat/completions"
 
@@ -363,7 +438,8 @@ class VLMRecognizer(Recognizer):
                 payload.pop(drop.name, None)
                 attempt -= 1
             except VLMTransientError as exc:
-                if attempt > self.retries:
+                if attempt > self.retries or (
+                        not retry_runaway and getattr(exc, "runaway", False)):
                     raise VLMError(f"{exc} [gave up after {attempt} attempt(s)]") from exc
                 if getattr(exc, "runaway", False) and "temperature" in payload:
                     # A different sample is the only thing that ever ended a loop
@@ -378,6 +454,11 @@ class VLMRecognizer(Recognizer):
                     log.warning("VLM attempt %d stalled/looped; retrying with thinking off", attempt)
                 log.warning("VLM attempt %d/%d failed: %s -- retrying on a fresh connection",
                             attempt, self.retries + 1, exc)
+                if on_retry is not None:
+                    try:
+                        on_retry(attempt, str(exc))
+                    except Exception:  # noqa: BLE001 - a progress report, never fatal
+                        log.debug("on_retry callback failed", exc_info=True)
                 self._sleep(self.retry_backoff * attempt)
 
     def _sleep(self, seconds: float) -> None:
@@ -449,6 +530,8 @@ class VLMRecognizer(Recognizer):
             # disconnect and stops generating. The text produced so far is NOT
             # salvaged: on real samples the loop began mid-page (~65% through),
             # so a truncated head would silently drop the rest of the page.
+            text = "".join(content)
+            log.warning("runaway output: starts %r ... ends %r", text[:160], text[-120:])
             err = VLMTransientError(str(loop))
             err.aborted = True
             err.runaway = True

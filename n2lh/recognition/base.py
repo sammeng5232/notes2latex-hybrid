@@ -38,6 +38,28 @@ class Recognizer(abc.ABC):
                    guidance: Optional[str] = None) -> TranscribeResult:
         ...
 
+    # True for an engine that can read a dense page as full-resolution strips
+    # (transcribe_strip). The pipeline only cuts a page into strips for such an
+    # engine; every other engine keeps the plain whole-page transcribe.
+    reads_strips: bool = False
+
+    def transcribe_strip(self, image_path, index: int, total: int, *, max_edge: int,
+                         context_tail: str = "", open_environments=(),
+                         page_colors=None, on_retry=None, variant: int = 0) -> str:
+        """LaTeX for strip ``index`` of ``total`` of a page, read at ``max_edge``.
+
+        ``variant`` > 0 marks a re-read of a strip whose earlier answer failed
+        the pipeline's check (the image is already a perturbed copy)."""
+        raise NotImplementedError(f"{self.name} cannot read strips")
+
+    def repair_text(self, guidance: str) -> Optional[TranscribeResult]:
+        """A repair made from the LaTeX alone, without the page image, or None.
+
+        Optional: None means this engine cannot, and the pipeline repairs the
+        usual way, with the page image.
+        """
+        return None
+
     def transcribe_table(self, image_path) -> Optional[str]:
         """A LaTeX tabular read from a crop holding just one table, or None.
 

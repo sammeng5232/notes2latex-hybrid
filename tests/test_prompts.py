@@ -96,6 +96,7 @@ def test_the_prompt_forbids_centering_a_corner_table():
 
 def test_doc_hint_block_names_the_files():
     from n2lh.recognition.prompts import doc_hint_block
+    from n2lh.recognition.prompts import doc_hint_block
     hint = doc_hint_block(["实变函数_周民强_总结.pdf"])
     assert "实变函数_周民强_总结.pdf" in hint
     assert "file name" in hint
@@ -140,3 +141,45 @@ def test_the_prompt_puts_the_title_before_any_corner_table():
     from n2lh.recognition.prompts import TRANSCRIBE_SYSTEM
     assert "comes FIRST in the transcription" in TRANSCRIBE_SYSTEM
     assert "Never open the page with a table" in TRANSCRIBE_SYSTEM
+
+
+def test_the_repair_prompt_carries_the_whole_page_not_its_tail():
+    """It used to keep only the last 3000 characters while asking for the
+    corrected full page, so the model re-read the rest from the image."""
+    from n2lh.recognition.prompts import fix_user_prompt
+    page = "START " + "x" * 8000 + " END"
+    prompt = fix_user_prompt(page, ["Undefined control sequence."])
+    assert "START" in prompt and "END" in prompt
+
+
+def test_a_text_only_repair_is_told_the_latex_is_the_content():
+    from n2lh.recognition.prompts import fix_user_prompt
+    assert "No image is attached" in fix_user_prompt("a", ["e"], text_only=True)
+    assert "No image is attached" not in fix_user_prompt("a", ["e"])
+
+
+def test_the_file_name_may_settle_spelling_but_never_supply_content():
+    """With a hint that said 'subject terms should prefer the file name', a
+    whole-page read of a real-analysis summary invented whole chapters."""
+    from n2lh.recognition.prompts import doc_hint_block
+    hint = doc_hint_block(["实变函数_周民强_总结.pdf"])
+    assert "ONLY to settle" in hint
+    assert "does not tell you what the page says" in hint
+
+
+def test_the_model_is_told_it_has_no_tools():
+    """Without this the endpoint sometimes answered in tool-call mode, with no
+    content at all."""
+    from n2lh.recognition.prompts import TRANSCRIBE_SYSTEM
+    assert "no tools" in TRANSCRIBE_SYSTEM
+    assert "Continue seamlessly" not in TRANSCRIBE_SYSTEM
+
+
+def test_a_strip_prompt_limits_the_model_to_what_the_strip_shows():
+    from n2lh.recognition.prompts import strip_user_prompt
+    first = strip_user_prompt(1, 6, "tail", ["itemize"], ["pink"])
+    later = strip_user_prompt(4, 6, "tail", ["itemize"], None)
+    assert "strip 1 of 6" in first and "tail" in first and "itemize" in first
+    assert "COLORED INK IS PRESENT ON THIS STRIP" in first
+    assert "strip 4 of 6" in later and "tail" not in later and "itemize" not in later
+    assert "Do not add a title" in later and "ONE mark" in later

@@ -24,6 +24,7 @@ Both parents transcribe *words and math*. Everything below was built here:
 |---|---|---|
 | **Colored ink** | Ingestion detects colored pen (saturation **and** ink darkness, so tinted paper/JPEG noise do not count) and keeps the page in RGB; each colored region is density-clustered, cropped **with the black ink whitened out**, and re-read with a color-only prompt; the returned `\textcolor` runs are fuzzily merged into the page's own LaTeX — anchored so a term that recurs in the body is colored only in the colored block — and the transcription's own runs of a read-out color are kept only when the read corroborates them, so invented colors are unwrapped. The crop contributes the color, never the content | Colors are simply lost (this pipeline's own grayscale ingestion used to lose them too) |
 | **The file name as a reading hint** | The upload's name is appended to the system prompt; hard-to-read names and titles prefer its spelling (周民强 was read as 周兆庆 on one pass and 周美玲 on another) | Neither uses metadata it already has |
+| **Dense pages read as full-resolution strips** | The line pitch is measured in narrow vertical stripes of the page; a page whose lines would be under 45px tall at the client's 1600px limit is cut at blank rows (never through a table, a colored glossary or a margin label) into ~10-line strips, each sent at 3600px, then joined; a compile repair of such a page gets its LaTeX only, never the illegible whole page | The whole page is downscaled, and on a dense A3 sheet the model writes what such a page usually says (Borel-Cantelli for Bolzano-Weierstrass, whole invented chapters) |
 | **Table re-read + dropped-table recovery** | A ruled table is re-read from an enlarged crop (resolution, not comprehension, is the limit); a table the transcription *dropped entirely* is read from its crop and put back | Dropped or mis-read table content stays wrong |
 | **Figures as pictures** | Hand-drawn figures are located (dedicated request, then measured) and cropped from the page image | The model is asked to redraw them (TikZ) or skips them |
 | **Layout fidelity** | The title comes first; margin columns (circled section numbers, status characters, ticks) are transcribed inline — never dropped, never continued by invention; a corner table is floated beside the body text as a `wraptable`, never stacked under the title or centered; strike-throughs become `\cancel`; model bookends ("Here is the transcription...") never reach the PDF | Only the body text survives |
@@ -254,11 +255,60 @@ dropped entirely on the next. The ruled-table re-read (below) now also covers
 the dropped case: when the page has a ruled table the transcription never
 mentioned, it is read from the crop and put back.)
 
-**The file name is a hint.** A handwritten name in a title is genuinely
-ambiguous -- the author 周民强 of `实变函数_周民强_总结.pdf` was read as 周兆庆
-on one pass and 周美玲 on another. The name of the uploaded file is appended
-to the system prompt, and hard-to-read names, titles and subjects prefer the
-file name's spelling.
+**The file name is a hint -- for spelling only.** A handwritten name in a
+title is genuinely ambiguous -- the author 周民强 of `实变函数_周民强_总结.pdf`
+was read as 周兆庆 on one pass and 周美玲 on another. The name of the uploaded
+file is appended to the system prompt, and a name or title the model can see
+but not read cleanly prefers the file name's spelling. It is never a source of
+content: an earlier wording ("subjects prefer the file name") let a whole-page
+read of that sheet fill itself with the chapters a real-analysis summary
+usually has.
+
+**Dense pages are read as strips** (`n2lh/pipeline/tiles.py`). The client sends
+every image at most 1600px on its longest edge. A 3508x4961 A3 summary sheet
+carries about a hundred lines of small handwriting, ~12px each at that size,
+and the model cannot read them -- so it writes what such a page usually says:
+every whole-page read called Bolzano-Weierstrass "Borel-Cantelli", and one
+invented product measures, Radon-Nikodym and the Fourier transform, none of
+which is on the page. Read as six full-resolution strips, the same page came
+back with every theorem it has, in order, and nothing it does not.
+
+- *When:* the line pitch is measured in four narrow vertical stripes (across
+  whole rows, lines of close handwriting touch and merge into paragraphs); a
+  page whose lines would be under 45px at 1600px is split. Measured: the dense
+  summaries sit at 28-30px, sparse notes at 65-75px and are read whole as before.
+- *Where to cut:* about six counted lines per strip (2-16 strips; long strips
+  had runs of five theorems skipped), at the emptiest row near each even
+  target, never through a ruled table or a colored block (a corner glossary, a
+  vertical margin label) -- colored ink counts as ink, since pink is lighter
+  than the dark threshold.
+- *Each strip* is sent at up to 3600px with a prompt that says what it is
+  (strip k of n, transcribe only what is visible, no invented title) and --
+  first strip only -- the previous page's context and the file-name hint. No
+  colored-ink directive: with it the endpoint answered strips with garbage
+  (13 of 13 requests); colors come from the page-level colored-region reads,
+  a measured left-margin color for the section labels, and runs in a color the
+  page has no ink of are unwrapped. Its `\figbox` coordinates are mapped back
+  into the page, a figure a cut split in two is rejoined, and each handwritten
+  line becomes its own paragraph.
+- *Every answer is checked* against the strip's line count, measured from its
+  ink (`count_lines`, narrow stripes), and for garbage (fragments with no math
+  or Chinese, mostly white space: "UL se五代 European European s", "httpdef").
+  A failing answer is read again from a changed image -- smaller, or framed in
+  white -- because the endpoint answers an identical request identically
+  (the same five theorems skipped at temperature 0.1, 0.35 and 0.6); up to six
+  variants, the best answer kept. Garbage is never kept. A runaway loop is not
+  retried on the same image either.
+- *Budget and retries:* one page deadline covers all strips; strips run
+  concurrently when pages are processed one at a time and in order inside a
+  prefetch worker (requests in flight stay at `vlm_parallel_workers`). A strip
+  that yields nothing fails the page, but the strips that came back are kept:
+  the retry asks only for the missing ones, and a strip that fails again is
+  left as a visible "could not be read" note instead of costing the page.
+- *Repairs* of a strip-read page send the full LaTeX and no image, with the
+  instruction that the LaTeX is the authoritative content; the ruled-table
+  crop re-read is skipped (the strips already read the table at full
+  resolution) unless the strips dropped it.
 
 **Mechanical auto-repair.** When a page fails to compile, a deterministic pass
 (`n2lh/pipeline/autofix.py`) runs *before* asking the model to fix it: it

@@ -14,7 +14,7 @@ hiddenimports = [
     "n2lh.pipeline.assembler", "n2lh.pipeline.autofix", "n2lh.pipeline.cjk", "n2lh.pipeline.context",
     "n2lh.pipeline.figures", "n2lh.pipeline.graph", "n2lh.pipeline.ingest",
     "n2lh.pipeline.layout", "n2lh.pipeline.sanitize", "n2lh.pipeline.segment",
-    "n2lh.pipeline.style", "n2lh.pipeline.tables",
+    "n2lh.pipeline.style", "n2lh.pipeline.tables", "n2lh.pipeline.tiles",
     "n2lh.recognition.base", "n2lh.recognition.heuristic",
     "n2lh.recognition.prompts", "n2lh.recognition.trocr", "n2lh.recognition.vlm",
     # desktop window / tray fallbacks

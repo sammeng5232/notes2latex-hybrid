@@ -122,7 +122,8 @@ FIGURES - do NOT redraw them
 - x0,y0,x1,y1 are integers from 0 to 1000 (origin TOP-LEFT, x right, y down): roughly where the figure is. An approximate box is fine - what matters is that there is exactly one \figbox per figure, in the right place in the text; the exact crop is measured separately.
 - Text lines, single equations and matrices are not figures. Transcribe any caption or text next to a figure as normal text.
 
-Continue seamlessly from the context you are given."""
+- You have no tools and no functions: never emit function calls, XML or JSON. Answer in LaTeX only.
+"""
 
 TABLE_SYSTEM = r"""You transcribe ONE ruled table from a crop of handwritten lecture notes into a LaTeX tabular.
 Output ONLY the tabular environment: no preamble, no surrounding text, no commentary, no code fences.
@@ -195,10 +196,13 @@ def doc_hint_block(filenames: List[str]) -> str:
     shown = ", ".join(f'"{n}"' for n in filenames[:5])
     return (
         "\n\nSOURCE FILE\n"
-        f"- These notes were uploaded as {shown}. A name, title or subject written "
-        "on the page (an author, a book, a course, a topic) is often the same words "
-        "as in this file name. When such a word is hard to read in the handwriting, "
-        "prefer the reading that matches the file name."
+        f"- These notes were uploaded as {shown}. Use this file name ONLY to settle "
+        "the spelling of a name or title you can SEE on the page but cannot read "
+        "cleanly (an author in the title line, a book or course name): prefer the "
+        "reading that matches the file name.\n"
+        "- The file name does not tell you what the page says. Never write a definition, "
+        "theorem, heading or section because the subject in the file name suggests it: "
+        "every line you write must be one you can read on the page."
     )
 
 
@@ -206,15 +210,7 @@ def transcribe_user_prompt(context_tail: str, open_environments: List[str],
                            color_ink: Optional[List[str]] = None) -> str:
     parts = ["Transcribe this page to LaTeX body content."]
     if color_ink:
-        names = " and ".join(color_ink)
-        parts.append(
-            f"COLORED INK IS PRESENT ON THIS PAGE: image analysis of the scan found "
-            f"{names} ink. It is on the page right now - look for it: colored text, "
-            "underlines, strikes, boxes and margin marks in those colors. Every one of "
-            "them must reach your output as \\textcolor{<color>}{...} (a strike-through "
-            "is \\textcolor{<color>}{\\cancel{...}}), as the system prompt describes. "
-            "A page with colored ink whose transcription contains no \\textcolor has "
-            "silently dropped the colors.")
+        parts.append(_color_directive(color_ink, "page"))
     if context_tail.strip():
         parts.append(
             "The document so far ends with:\n```latex\n" + context_tail.strip() + "\n```"
@@ -228,6 +224,65 @@ def transcribe_user_prompt(context_tail: str, open_environments: List[str],
         )
     parts.append("Return only the LaTeX for THIS page.")
     return "\n\n".join(parts)
+
+
+def strip_user_prompt(index: int, total: int, context_tail: str = "",
+                      open_environments: Optional[List[str]] = None,
+                      color_ink: Optional[List[str]] = None) -> str:
+    """User prompt for strip ``index`` of ``total`` of a page (see pipeline/tiles.py).
+
+    The system prompt describes a whole page. A strip is told it is not one: it
+    is a band of the page at full resolution, it must contain only what is
+    visible in it, and the page-level rules about the title coming first and
+    about corner tables apply only to the top strip -- otherwise strip 5 of 6
+    opens with an invented heading.
+    """
+    parts = [
+        f"This image is strip {index} of {total} of ONE page of handwritten notes: a "
+        "horizontal band cut across the full width of the page, at blank rows between "
+        "lines of handwriting, shown at full resolution.",
+        "Transcribe exactly what is visible in this strip, top to bottom, and nothing else. "
+        "Every line you write must be one you can read in this image. Do not add a title, "
+        "heading, introduction or conclusion that is not in the strip, and do not continue, "
+        "complete or summarise anything beyond its top and bottom edges.",
+        "Put each handwritten line on a line of its own. A vertical label in the left margin "
+        "(a circled number with characters written one under another, such as a circled 2 "
+        "above 测 above 度) is ONE mark: write it once, whole, at the start of the line "
+        "where it begins, e.g. \\textbf{② 测度}.",
+        "\\figbox coordinates are relative to THIS strip image: x from its left edge (0) "
+        "to its right edge (1000), y from its top edge (0) to its bottom edge (1000).",
+        "Close every environment you open in this strip.",
+    ]
+    if index > 1:
+        parts.append(
+            "This strip is not the top of the page, so the LAYOUT rules about the page's "
+            "title coming first and about corner tables do not apply to it: a table in "
+            "this strip is an ordinary tabular, not a wraptable.")
+    if color_ink:
+        parts.append(_color_directive(color_ink, "strip"))
+    if index == 1 and context_tail.strip():
+        parts.append(
+            "The document so far ends with:\n```latex\n" + context_tail.strip() + "\n```"
+            "\nKeep notation, numbering and style consistent with it.")
+    if index == 1 and open_environments:
+        parts.append(
+            "Note: the previous page left these LaTeX environments open: "
+            f"{', '.join(open_environments)}. Continue inside them (do not re-open them).")
+    parts.append("Return only the LaTeX for THIS strip.")
+    return "\n\n".join(parts)
+
+
+def _color_directive(names: List[str], where: str = "page") -> str:
+    """The colored-ink instruction, for a page or for a strip of one."""
+    joined = " and ".join(names)
+    return (
+        f"COLORED INK IS PRESENT ON THIS {where.upper()}: image analysis of the scan found "
+        f"{joined} ink. It is on the {where} right now - look for it: colored text, "
+        "underlines, strikes, boxes and margin marks in those colors. Every one of "
+        "them must reach your output as \\textcolor{<color>}{...} (a strike-through "
+        "is \\textcolor{<color>}{\\cancel{...}}), as the system prompt describes. "
+        f"A {where} with colored ink whose transcription contains no \\textcolor has "
+        "silently dropped the colors.")
 
 
 PACKAGES = ("amsmath, amssymb, amsthm, mathtools, mathrsfs, bm, bbm, cancel, xcolor, "
@@ -281,15 +336,25 @@ def error_hints(errors: List[str]) -> List[str]:
     return [hint for pattern, hint in _HINTS if pattern.search(text)]
 
 
-def fix_user_prompt(previous_latex: str, errors: List[str], repeats: int = 0) -> str:
+# A page transcript can never be longer than the client's output cap
+# (VLMRecognizer.max_output_chars), so this keeps the whole page in practice.
+_FIX_LATEX_LIMIT = 24000
+
+
+def fix_user_prompt(previous_latex: str, errors: List[str], repeats: int = 0,
+                    text_only: bool = False) -> str:
     """Repair prompt. ``repeats`` = how many earlier repair attempts already failed
     with this very same error; from 2 on, plain "fix it" has demonstrably stopped
     working (a real job got the identical broken diagram back four times), so the
     prompt says so and asks for the smallest change that compiles."""
     err_text = "\n".join(f"- {e}" for e in errors) or "- unknown error"
     prev = previous_latex.strip()
-    if len(prev) > 3000:
-        prev = prev[-3000:]
+    # The whole page, not its tail. This used to keep only the last 3000
+    # characters and still ask for 'the corrected full page body', so the
+    # model had to re-read the rest from the image -- on a dense page, the
+    # picture too small to read, which is where it wrote from memory.
+    if len(prev) > _FIX_LATEX_LIMIT:
+        prev = prev[-_FIX_LATEX_LIMIT:]
     hints = error_hints(errors)
     hint_text = ("Hints:\n" + "\n".join(f"- {h}" for h in hints) + "\n\n") if hints else ""
     escalate = ""
@@ -306,5 +371,16 @@ def fix_user_prompt(previous_latex: str, errors: List[str], repeats: int = 0) ->
         f"Compiler errors:\n{err_text}\n\n"
         f"{hint_text}"
         f"{escalate}"
+        f"{_TEXT_ONLY if text_only else ''}"
         "Fix the errors and return the corrected full page body."
     )
+
+
+# For a page read as full-resolution strips: no image is sent with the repair,
+# and the model is told why.
+_TEXT_ONLY = (
+    "No image is attached: this page was read from full-resolution strips, and the "
+    "LaTeX above is the authoritative content. Change only what the compiler errors "
+    "require, return every other line exactly as it is, and do not add, remove, "
+    "reorder or reword any text.\n\n"
+)

@@ -25,8 +25,8 @@ from PIL import Image
 
 from n2lh.compiler.latex import CompileResult, LatexCompiler
 from n2lh.pipeline.assembler import build_document
-from n2lh.pipeline.colors import (apply_color_runs, extract_color_runs,
-                                  reconcile_colors)
+from n2lh.pipeline.colors import (apply_color_runs, color_margin_labels, drop_absent_colors,
+                                  extract_color_runs, reconcile_colors)
 from n2lh.pipeline.context import ContextWindow, EnvironmentTracker
 from n2lh.pipeline.autofix import autofix_latex
 from n2lh.pipeline.cjk import add_cjk, engine_for, has_cjk
@@ -37,6 +37,10 @@ from n2lh.pipeline.sanitize import comment_out, sanitize_body
 from n2lh.pipeline.style import bold_labels
 from n2lh.pipeline.tables import (crop_band, find_table_band, insert_tabular,
                                   replace_tabular, wrap_corner_table)
+from n2lh.pipeline.tiles import (STRIP_EDGE, STRIP_VARIANTS, count_lines, join_strips,
+                                 judge_strip, line_pitch, needs_strips, plan_strips,
+                                 planning_mask, protected_bands, strip_variant, tidy_strip,
+                                 unpad_figbox)
 from n2lh.recognition.base import PageImage, Recognizer, TranscribeResult
 from n2lh.recognition.prompts import PREAMBLE_TEX, fix_user_prompt
 
@@ -138,6 +142,14 @@ class DocumentPipeline:
         self._tables_read: set = set()   # a page's table is re-read at most once
         self._color_runs: Dict = {}      # page index -> colored runs read from crops
         self._cjk = False                # switched on by the first page of CJK
+        # Dense pages read as full-resolution strips (see pipeline/tiles.py).
+        self._strip_plans: Dict[int, Optional[tuple]] = {}   # page -> plan, or None
+        self._strip_text: Dict[int, Dict[int, str]] = {}     # page -> strip -> tidied LaTeX
+        self._strip_lock = threading.Lock()
+        self._ink_families: Dict[int, Optional[List[str]]] = {}   # page -> colored ink measured
+        self._margin_colors: Dict[int, Optional[str]] = {}    # page -> left-margin pen color
+        self._strip_failed: Dict[int, set] = {}                # page -> strips that yielded nothing
+        self._tiled: set = set()                             # pages whose latest read was strips
         self.compiler = compiler
         self.fixer = fixer          # engine used for log-guided repair passes
         self.max_retries = max(1, max_retries + 1)  # total attempts per page
@@ -253,6 +265,216 @@ class DocumentPipeline:
         return max(float(self.RECOGNIZER_CALL_BUDGET),
                    float(getattr(engine, "hard_budget", 0) or 0))
 
+    # ------------------------------------------------------------ dense pages
+    def _strip_plan(self, engine: Recognizer, page: PageImage):
+        """``(strips, strip_paths, expected_lines, page_height)`` for a dense page, else None.
+
+        Only for an engine that reads strips. Computed once per page and kept, so
+        a page whose prefetch failed is re-read on the same cuts, and the strips
+        that did come back are not asked for again.
+        """
+        if not getattr(engine, "reads_strips", False):
+            return None
+        with self._strip_lock:
+            if page.index in self._strip_plans:
+                return self._strip_plans[page.index]
+        plan = None
+        try:
+            with Image.open(page.path) as opened:
+                image = opened.convert("RGB")
+            mask = planning_mask(image)
+            pitch = line_pitch(mask)
+            if needs_strips(mask, pitch):
+                strips = plan_strips(mask, pitch, keep_whole=protected_bands(image, mask, pitch))
+                if len(strips) >= 2:
+                    paths, expected = [], []
+                    for s in strips:
+                        path = page.path.parent / f".strip-p{page.index:04d}-{s.index:02d}.png"
+                        crop = image.crop((0, s.top, image.width, s.bottom))
+                        crop.save(path, "PNG")
+                        paths.append(path)
+                        expected.append(count_lines(planning_mask(crop), pitch))
+                    plan = (strips, paths, expected, image.height)
+        except Exception as exc:  # noqa: BLE001 - fall back to a whole-page read
+            log.warning("page %d: could not plan strips: %s", page.index, exc)
+            plan = None
+        with self._strip_lock:
+            self._strip_plans[page.index] = plan
+        return plan
+
+    def _read_page(self, engine: Recognizer, page: PageImage, tail: str,
+                   open_envs: List[str], on_event: Optional[EventHandler],
+                   stop: Optional[Callable[[], bool]] = None,
+                   pooled: bool = False) -> TranscribeResult:
+        """A page's first transcription: whole, or as full-resolution strips.
+
+        A dense page is read as strips (see pipeline/tiles.py). One page deadline
+        covers all of its strips -- the same bound a whole-page call has -- and a
+        strip that would have to start with too little of it left fails instead
+        of being sent to be abandoned. Each strip is sanitized on its own before
+        the join: a strip that answers with a whole \\documentclass document would
+        otherwise make sanitizing the joined page cut away every other strip.
+        ``pooled`` reads strips concurrently (the live path, pages one at a time);
+        without it they are read in order (inside a prefetch worker, where pages
+        are already concurrent), so requests in flight stay at the worker count.
+        """
+        plan = self._strip_plan(engine, page)
+        if plan is None:
+            self._tiled.discard(page.index)
+            return _call_with_deadline(lambda: engine.transcribe(page, tail, open_envs),
+                                       self._call_budget(engine))
+
+        strips, paths, expected, height = plan
+        total = len(strips)
+        deadline = time.monotonic() + self._call_budget(engine)
+        with self._strip_lock:
+            done = self._strip_text.setdefault(page.index, {})
+            missing = [s for s in strips if s.index not in done]
+        self._emit(on_event, "strips_planned", page=page.index, strips=total,
+                   cached=total - len(missing))
+
+        failed = threading.Event()      # one strip failed: the page fails, start no more
+        first_error: List[BaseException] = []
+
+        def read(strip) -> None:
+            if failed.is_set():
+                raise RuntimeError("strip %d/%d not started: another strip failed"
+                                   % (strip.index, total))
+            if (stop is not None and stop()) or self._cancelled():
+                raise RuntimeError("stopped before strip %d/%d" % (strip.index, total))
+            try:
+                read_one(strip)
+            except Exception as exc:
+                with self._strip_lock:
+                    first_error.append(exc)
+                failed.set()
+                raise
+
+        def read_one(strip) -> None:
+            """Read a strip, checking each answer and re-reading a bad one.
+
+            An answer that fails judge_strip (lines skipped, garbage) is read
+            again from a padded or rescaled copy of the strip -- the endpoint
+            answers an identical request identically -- and the best answer
+            is kept. A strip that yields no answer at all fails the page the
+            first time (the retry pass asks for it alone) and is left as a
+            visible gap the second time, rather than costing the whole page.
+            """
+            started = time.monotonic()
+            source = paths[strip.index - 1]
+            want = expected[strip.index - 1]
+            best: Optional[tuple] = None          # (score, text, verdict)
+            error: Optional[BaseException] = None
+            for variant in range(len(STRIP_VARIANTS)):
+                left = deadline - time.monotonic()
+                if left < 30:
+                    error = error or RecognizerHung(
+                        f"no time left in the page budget for strip {strip.index}/{total}")
+                    break
+                if (stop is not None and stop()) or self._cancelled():
+                    raise RuntimeError("stopped during strip %d/%d" % (strip.index, total))
+                image = source
+                if variant:
+                    image = source.with_name(f"{source.stem}-v{variant}.png")
+                    with Image.open(source) as opened:
+                        strip_variant(opened.convert("RGB"), variant).save(image, "PNG")
+
+                def retried(attempt: int, error: str, variant=variant) -> None:
+                    self._emit(on_event, "strip_retry", page=page.index, strip=strip.index,
+                               strips=total, attempt=attempt, variant=variant,
+                               error=error[:200])
+
+                try:
+                    raw = _call_with_deadline(
+                        lambda image=image, variant=variant: engine.transcribe_strip(
+                            image, strip.index, total, max_edge=STRIP_EDGE,
+                            context_tail=tail if strip.index == 1 else "",
+                            open_environments=open_envs if strip.index == 1 else (),
+                            on_retry=retried, variant=variant),
+                        left)
+                except RecognizerHung:
+                    raise
+                except Exception as exc:  # noqa: BLE001 - the next variant may read
+                    if self._cancelled():
+                        raise
+                    error = exc
+                    self._emit(on_event, "strip_reread", page=page.index, strip=strip.index,
+                               strips=total, variant=variant, reason=str(exc)[:200])
+                    continue
+                raw = sanitize_body(raw or "")
+                if variant:
+                    with Image.open(source) as opened:
+                        raw = unpad_figbox(raw, variant, *opened.size)
+                ok, score, why = judge_strip(raw, want)
+                # Garbage scores 0 and is never kept, even as a last resort: a
+                # read that skipped lines is still the page's own text, garbage
+                # is not.
+                if score > 0 and (best is None or score > best[0]):
+                    best = (score, raw, why)
+                if ok:
+                    break
+                if score == 0:
+                    error = RuntimeError(f"unusable answer: {why}")
+                self._emit(on_event, "strip_reread", page=page.index, strip=strip.index,
+                           strips=total, variant=variant, reason=why[:200])
+
+            if best is None:
+                with self._strip_lock:
+                    again = strip.index in self._strip_failed.setdefault(page.index, set())
+                    self._strip_failed[page.index].add(strip.index)
+                if not again:
+                    raise error or RuntimeError(f"strip {strip.index}/{total} not read")
+                text = ("\\par\\noindent\\textit{[Rows %d--%d of this page could not be "
+                        "read: the recognizer failed on them twice.]}" % (strip.top, strip.bottom))
+                self._emit(on_event, "strip_unreadable", page=page.index, strip=strip.index,
+                           strips=total, error=str(error)[:200])
+            else:
+                score, raw, why = best
+                text = tidy_strip(raw, strip, height)
+                if why != "ok":
+                    log.warning("page %d strip %d/%d: kept the best of its reads, which %s",
+                                page.index, strip.index, total, why)
+                    self._emit(on_event, "strip_doubtful", page=page.index, strip=strip.index,
+                               strips=total, reason=why[:200])
+            with self._strip_lock:
+                done[strip.index] = text
+            self._emit(on_event, "strip_done", page=page.index, strip=strip.index,
+                       strips=total, chars=len(text),
+                       seconds=round(time.monotonic() - started, 1))
+
+        if pooled and len(missing) > 1:
+            pool = ThreadPoolExecutor(max_workers=min(len(missing), self.parallel_workers))
+            try:
+                for future in as_completed([pool.submit(read, s) for s in missing]):
+                    if future.exception() is not None:    # the first failure ends the page
+                        raise first_error[0] if first_error else future.exception()
+            finally:
+                # Strips already in flight are waited for (each is bounded by the
+                # page deadline): their answers are kept, so the retry pass does
+                # not send the same strip a second time while the first is running.
+                pool.shutdown(wait=True, cancel_futures=True)
+        else:
+            for strip in missing:
+                read(strip)
+
+        with self._strip_lock:
+            parts = [done[s.index] for s in strips]
+            self._tiled.add(page.index)
+        return TranscribeResult(latex=join_strips(parts, strips, height),
+                                engine=getattr(engine, "name", "?"),
+                                notes=f"read as {total} full-resolution strips")
+
+    def _strips_pending(self, page: PageImage) -> bool:
+        """True when some of the page's strips were read and some were not."""
+        with self._strip_lock:
+            plan = self._strip_plans.get(page.index)
+            done = self._strip_text.get(page.index, {})
+            return plan is not None and 0 < len(done) < len(plan[0])
+
+    def _is_tiled(self, page: PageImage) -> bool:
+        """Whether the page's latest transcription was read as strips."""
+        return page.index in self._tiled
+
     def _prefetch(self, pages: List[PageImage], on_event: Optional[EventHandler]
                   ) -> "tuple[Dict[int, TranscribeResult], int]":
         """Fire off every page's first-attempt transcription concurrently.
@@ -287,9 +509,9 @@ class DocumentPipeline:
             if give_up.is_set() or self._cancelled():
                 return page.index, None, skipped
             try:
-                result = _call_with_deadline(
-                    lambda: self.recognizer.transcribe(page, "", []),
-                    self._call_budget(self.recognizer))
+                result = self._read_page(
+                    self.recognizer, page, "", [], on_event,
+                    stop=lambda: give_up.is_set() or self._cancelled(), pooled=False)
                 # Crop the figures here, in the worker, so the extra "locate the
                 # figures" request runs in parallel with the other pages.
                 return page.index, self._finish(page, result), None
@@ -360,19 +582,31 @@ class DocumentPipeline:
                     # failure): ask for a plain transcription. Sending a "fix
                     # this LaTeX" prompt with NOTHING to fix made the model
                     # answer with a whole standalone document.
-                    engine = self.recognizer if attempt == 1 else (self.fixer or self.recognizer)
-                    result = self._finish(page, _call_with_deadline(
-                        lambda engine=engine: engine.transcribe(page, tail, open_envs),
-                        self._call_budget(engine)))
+                    # Strips already read are kept, so a page left half read goes
+                    # back to the engine that read them for the rest.
+                    engine = (self.recognizer if attempt == 1 or self._strips_pending(page)
+                              else (self.fixer or self.recognizer))
+                    result = self._finish(page, self._read_page(
+                        engine, page, tail, open_envs, on_event, pooled=True))
                     engine_used = engine.name
                     engine_succeeded = True
                 else:
                     fixer = self.fixer or self.recognizer
-                    guidance = fix_user_prompt(result.latex, errors, repeats)
+                    # A page read as strips is repaired from its LaTeX alone: the
+                    # only image a repair could send is the whole page at the
+                    # resolution that made the model write from memory.
+                    tiled = self._is_tiled(page)
+                    guidance = fix_user_prompt(result.latex, errors, repeats, text_only=tiled)
+
+                    def repair(fixer=fixer, guidance=guidance, tiled=tiled):
+                        if tiled:
+                            fixed = fixer.repair_text(guidance)
+                            if fixed is not None:
+                                return fixed
+                        return fixer.transcribe(page, tail, open_envs, guidance=guidance)
+
                     result = self._finish(page, _call_with_deadline(
-                        lambda fixer=fixer, guidance=guidance: fixer.transcribe(
-                            page, tail, open_envs, guidance=guidance),
-                        self._call_budget(fixer)))
+                        repair, self._call_budget(fixer)))
                     engine_used = fixer.name
                     engine_succeeded = True
                 engine_failed = False
@@ -383,9 +617,11 @@ class DocumentPipeline:
                 self._emit(on_event, "engine_error", page=page.index,
                            attempt=attempt, error=str(exc))
                 # Escalate to a *different* engine once. Re-asking the very same
-                # engine (engine=vlm) is pointless: its client already retried.
-                if (self.fixer is not None and self.fixer is not self.recognizer
-                        and attempt == 1):
+                # engine (engine=vlm) is pointless: its client already retried --
+                # unless the page was read as strips and only some came back: then
+                # a second pass asks for the missing strips alone.
+                if attempt == 1 and (self._strips_pending(page) or (
+                        self.fixer is not None and self.fixer is not self.recognizer)):
                     continue
                 break
 
@@ -522,10 +758,16 @@ class DocumentPipeline:
           was missing entirely from one pass, present from another): read it
           from the crop and put it back.
 
-        Each page is re-read at most once.
+        Each page is re-read at most once. A page read as strips already had its
+        tables read at full resolution -- a strip never cuts through one -- so
+        there a crop (sent at the whole-page size limit) could only be worse;
+        only a table the strips dropped is fetched.
         """
         reread = getattr(self.recognizer, "transcribe_table", None)
         if (reread is None or page.index in self._tables_read or self._cancelled()):
+            return latex
+        if self._is_tiled(page) and "begin{tabular}" in latex:
+            self._tables_read.add(page.index)
             return latex
         try:
             with Image.open(page.path) as opened:
@@ -639,6 +881,17 @@ class DocumentPipeline:
                 if n:
                     log.info("page %d: %d colored run(s) applied from crop re-reads",
                              page.index, n)
+            present = self._page_colors(page)
+            if present is not None and "\\textcolor" in latex:
+                latex, n = drop_absent_colors(latex, present)
+                if n:
+                    log.info("page %d: %d run(s) in a color the page does not have unwrapped",
+                             page.index, n)
+            margin = self._margin_color(page)
+            if margin:
+                latex, n = color_margin_labels(latex, margin)
+                if n:
+                    log.info("page %d: %d margin label(s) colored %s", page.index, n, margin)
             if corner_texts:
                 # The corner table's own text tells us which tabular it is; the
                 # repositioning itself is deterministic (see wrap_corner_table).
@@ -650,6 +903,42 @@ class DocumentPipeline:
             log.warning("page %d: could not re-read the colored ink: %s",
                         page.index, exc)
         return latex
+
+    def _page_colors(self, page: PageImage) -> Optional[List[str]]:
+        """The page's colored-ink families, measured once; None if unmeasurable."""
+        if page.index not in self._ink_families:
+            try:
+                from n2lh.pipeline.ingest import color_ink_names
+                with Image.open(page.path) as opened:
+                    self._ink_families[page.index] = color_ink_names(opened.convert("RGB"))
+            except Exception as exc:  # noqa: BLE001 - colors are best-effort
+                log.warning("page %d: could not measure its ink colors: %s", page.index, exc)
+                self._ink_families[page.index] = None
+        return self._ink_families[page.index]
+
+    def _margin_color(self, page: PageImage) -> Optional[str]:
+        """The one pen color of the page's left-margin marks, measured; or None.
+
+        Only when every colored block in the left margin is the same color --
+        on the real page, six green section labels. Two colors there, or none,
+        and nothing is guessed.
+        """
+        if page.index in self._margin_colors:
+            return self._margin_colors[page.index]
+        color = None
+        try:
+            with Image.open(page.path) as opened:
+                image = opened.convert("RGB")
+            names = set()
+            for box, found in colored_ink_regions(image, max_regions=12):
+                if (box[0] + box[2]) / 2 / max(image.width, 1) < 0.15:
+                    names.update(found)
+            if len(names) == 1:
+                color = names.pop()
+        except Exception as exc:  # noqa: BLE001 - colors are best-effort
+            log.warning("page %d: could not measure the margin color: %s", page.index, exc)
+        self._margin_colors[page.index] = color
+        return color
 
     def _locate(self, page: PageImage):
         """Accurate figure boxes from the recognizer, or None (best-effort)."""

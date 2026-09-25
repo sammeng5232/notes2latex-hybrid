@@ -14,7 +14,8 @@ from typing import List, Optional
 
 from PIL import Image
 
-from n2lh.pipeline.colors import apply_color_runs, extract_color_runs
+from n2lh.pipeline.colors import (apply_color_runs, color_margin_labels,
+                                  drop_absent_colors, extract_color_runs)
 from n2lh.pipeline.graph import DocumentPipeline
 from n2lh.recognition.base import PageImage, Recognizer, TranscribeResult
 
@@ -170,7 +171,8 @@ def test_a_color_the_model_invented_is_unwrapped(tmp_path):
                               max_retries=0).run(
         [PageImage(1, colored_page(tmp_path))], tmp_path / "out")
     assert "textcolor{pink}{定理 3.2 (Egorov)" not in result.tex
-    assert "定理 3.2 (Egorov) 说依测度收敛。" in result.tex, "the words stay"
+    # the words stay (the label itself is bolded, see pipeline/style.py)
+    assert "\\textbf{定理 3.2 (Egorov)} 说依测度收敛。" in result.tex, "the words stay"
     assert result.tex.count("\\textcolor{pink}{Epigraph and Supgraph}") == 1
 
 
@@ -352,3 +354,27 @@ def test_margin_mark_reads_color_nothing(tmp_path):
     assert len(rec.calls) == 1, "the margin read still runs and adjudicates"
     assert "\\textcolor" not in result.tex, "its runs color nothing"
     assert "为外测度，测度是核心概念" in result.tex
+
+
+# ------------------------------------------------ measured, not read, colors
+def test_a_color_the_page_has_no_ink_of_is_dropped():
+    """A strip read wrapped a whole section's labels in blue on a page written
+    in black, pink and green."""
+    latex = ("\\textcolor{blue}{定理 4.1}. 非负可测简单函数之积分为线性的. "
+             "\\textcolor{magenta}{振幅} \\textcolor{gray}{注}")
+    out, n = drop_absent_colors(latex, ["pink", "green"])
+    assert n == 1
+    assert "\\textcolor{blue}" not in out and "定理 4.1" in out
+    assert "\\textcolor{magenta}{振幅}" in out          # magenta is pink ink
+    assert "\\textcolor{gray}{注}" in out              # not an ink family: left alone
+
+
+def test_margin_section_labels_take_the_margins_color():
+    latex = "\\textbf{② 测度}\n定理 2.1. $m^*E$\n\\textbf{定理 2.4} 不动"
+    out, n = color_margin_labels(latex, "green")
+    assert n == 1
+    assert "\\textcolor{green}{\\textbf{② 测度}}" in out
+    assert "\\textbf{定理 2.4} 不动" in out
+    again, m = color_margin_labels(out, "green")
+    assert m == 0 and again == out
+

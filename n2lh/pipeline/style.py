@@ -33,6 +33,28 @@ _LABEL_RE = re.compile(
     r"(?:\s*\([^()\n]{0,60}\))?"
     r"\s*[.:])")
 
+# Chinese notes number their statements: `定理 1.16 (Bolzano-Weierstrass).`,
+# `推论 2.2.`, `定义 3.6.`. The English pattern above never matched these -- it
+# has no Chinese words, and it wants the punctuation straight after the label,
+# so even `Thm 3.2.` slipped past. A number is required here, which is what
+# makes a label safe to bold where it stands mid-line: a dense summary sheet
+# writes `...次可加。 推论 2.2. 对可数点集...`, two statements on one line.
+_ZH_LABELS = ("定理", "定义", "推论", "引理", "命题", "性质", "公理", "例题", "例",
+              "注记", "注", "证明")
+_ZH_LABEL_RE = re.compile(
+    # Not after a backslash or an ASCII letter/digit. A CJK character before it
+    # is fine: the required number already keeps `延拓定理` (no number) out, and
+    # a margin mark such as `预` often sits right against the label.
+    r"(?<![\\A-Za-z0-9])(?P<label>(?:" + "|".join(_ZH_LABELS) + r")"
+    r"\s*\d+(?:\.\d+)*"                       # the number is required
+    r"(?:\s*[(（][^()（）\n$]{0,40}[)）])?"   # (Bolzano-Weierstrass), （逐项积分）
+    r"\s*[.．:：]?)")
+# Marks from the left-margin column that a transcription keeps at the start of
+# the line they stand beside: a circled section number, or one character of a
+# vertical section label (预 / 备, 测 / 度 ...). The label after them is bolded,
+# the mark itself is left as it is.
+_MARGIN_PREFIX = re.compile(r"^(?P<margin>[ \t]*(?:[①-⑳][ \t]*)?(?:[一-鿿][ \t]+)?)")
+
 # `Lecture 9 2025/11/9 Week 12`, `Lecture 3 20250917 Week 3`, `Lecture 1, 3 Sep, Week 1`.
 _LECTURE_RE = re.compile(
     r"^(?P<indent>[ \t]*)"
@@ -65,6 +87,28 @@ def _display_math_depth(line: str, depth: int) -> int:
     return depth
 
 
+_INLINE_MATH = re.compile(r"(\$[^$]*\$)")
+
+
+def _bold_zh(line: str) -> Tuple[str, int]:
+    """Bold every numbered Chinese label in the text parts of one line."""
+    n = 0
+
+    def sub(m: "re.Match[str]") -> str:
+        nonlocal n
+        before = m.string[:m.start()].rstrip()
+        if before.endswith("\\textbf{"):
+            return m.group(0)                      # the model already bolded it
+        n += 1
+        label = m.group("label").rstrip()
+        return f"\\textbf{{{label}}}" + m.group(0)[len(m.group("label").rstrip()):]
+
+    parts = _INLINE_MATH.split(line)
+    for i in range(0, len(parts), 2):             # even parts are text, odd are $...$
+        parts[i] = _ZH_LABEL_RE.sub(sub, parts[i])
+    return "".join(parts), n
+
+
 def bold_labels(latex: str) -> Tuple[str, int]:
     """Bold the note labels that start a line. Returns ``(latex, n_bolded)``."""
     out: List[str] = []
@@ -87,6 +131,9 @@ def bold_labels(latex: str) -> Tuple[str, int]:
                     label = m.group("label").rstrip()
                     body = f"{m.group('indent')}\\textbf{{{label}}}{body[m.end():]}"
                     n += 1
+                else:
+                    body, k = _bold_zh(body)
+                    n += k
 
         out.append(body + newline)
         depth = _display_math_depth(body, depth)

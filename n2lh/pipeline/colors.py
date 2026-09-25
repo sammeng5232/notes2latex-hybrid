@@ -248,3 +248,66 @@ def apply_color_runs(page_latex: str,
                       + "\\textcolor{" + color + "}{" + page_latex[start:end] + "}"
                       + page_latex[end:])
     return page_latex, len(planned)
+
+
+# A margin section label as the strip prompt asks for it: \\textbf{② 测度}.
+_MARGIN_LABEL = re.compile(r"\\textbf\{([\u2460-\u2473\u24f5-\u24fe][^{}\n]{0,12})\}")
+
+
+def color_margin_labels(page_latex: str, color: str) -> Tuple[str, int]:
+    """Color the page's margin section labels (a circled number and its words).
+
+    The pen color of the left margin is measured, not read: on the real page
+    every section label is green, and the colored-region reads skip margin
+    marks on purpose (their runs used to color body words). A strip read writes
+    each label as \\textbf{② 测度}; this wraps those in the margin's color.
+    """
+    n = 0
+
+    def wrap(m: "re.Match[str]") -> str:
+        nonlocal n
+        before = page_latex[max(0, m.start() - 20):m.start()]
+        if before.endswith("\\textcolor{" + color + "}{"):
+            return m.group(0)
+        n += 1
+        return "\\textcolor{" + color + "}{" + m.group(0) + "}"
+
+    out = _MARGIN_LABEL.sub(wrap, page_latex)
+    return out, n
+
+
+# The ink family (as ingest.color_ink_names names them) a \textcolor name
+# belongs to. Names outside this map (gray, black, a custom color) are left alone.
+_FAMILY = {
+    "pink": "pink", "magenta": "pink", "violet": "violet", "purple": "violet",
+    "orange": "orange", "brown": "orange", "yellow": "yellow", "green": "green",
+    "lime": "green", "olive": "green", "teal": "cyan", "cyan": "cyan",
+    "blue": "blue", "red": "red",
+}
+
+
+def drop_absent_colors(page_latex: str, present: List[str]) -> Tuple[str, int]:
+    """Unwrap \textcolor runs in a color the page has no ink of at all.
+
+    Measured, not read: ``present`` is the page's colored-ink families. A strip
+    read of the real page wrapped a whole section's labels in blue on a page
+    written in black, pink and green; the words are kept, the color is dropped.
+    """
+    families = set(present)
+    dropped = []
+
+    def unwrap(m: "re.Match[str]") -> str:
+        family = _FAMILY.get(m.group(1).lower())
+        if family is None or family in families:
+            return m.group(0)
+        dropped.append(m.group(1))
+        return m.group(2)
+
+    out = page_latex
+    for _ in range(3):                          # runs nested inside runs
+        new = _RUN.sub(unwrap, out)
+        if new == out:
+            break
+        out = new
+    return out, len(dropped)
+

@@ -99,3 +99,46 @@ def test_a_bolded_page_still_compiles(tmp_path):
     assert n == 4
     result = LatexCompiler(timeout=120).compile(build_document(out), tmp_path / "out")
     assert result.ok, result.errors
+
+
+# ------------------------------------------------------ numbered Chinese labels
+@pytest.mark.parametrize("line,expected", [
+    ("定理 1.16 (Bolzano-Weierstrass). 有界无限点集均有极限点。",
+     r"\textbf{定理 1.16 (Bolzano-Weierstrass).} 有界无限点集均有极限点。"),
+    ("定义 2.2 (Carathéodory 条件). 可测集。",
+     r"\textbf{定义 2.2 (Carathéodory 条件).} 可测集。"),
+    ("定理4.6（逐项积分）．非负可测函数列",
+     r"\textbf{定理4.6（逐项积分）．}非负可测函数列"),
+    ("推论 3.10. 上述之每个均可取成。", r"\textbf{推论 3.10.} 上述之每个均可取成。"),
+])
+def test_a_numbered_chinese_label_is_bolded(line, expected):
+    assert bolded(line) == expected
+
+
+def test_a_second_statement_on_the_same_line_is_bolded_too():
+    """A dense summary sheet writes two statements on one handwritten line."""
+    out, n = bold_labels("定理 2.1. 外测度次可加。 推论 2.2. 对可数点集有 m*E=0.")
+    assert out == r"\textbf{定理 2.1.} 外测度次可加。 \textbf{推论 2.2.} 对可数点集有 m*E=0."
+    assert n == 2
+
+
+@pytest.mark.parametrize("line,expected", [
+    ("① 定理 1.16. 有极限点。", r"① \textbf{定理 1.16.} 有极限点。"),
+    ("预 定理 1.18. 闭集套。", r"预 \textbf{定理 1.18.} 闭集套。"),
+])
+def test_a_margin_mark_before_the_label_stays_outside_the_bold(line, expected):
+    assert bolded(line) == expected
+
+
+@pytest.mark.parametrize("line", [
+    "这是连续函数延拓定理的推论。",          # 定理 inside a word, no number
+    "(Cantor 闭集套定理) is a name",         # in a parenthetical, no number
+    r"$\text{定理 1.2}$ inside math",
+])
+def test_an_unnumbered_or_math_label_is_left_alone(line):
+    assert bolded(line) == line
+
+
+def test_a_chinese_label_the_model_already_bolded_is_not_bolded_twice():
+    line = r"\textbf{定理 6.16 (Bessel-Fischer)} 在 $L^2$ 中"
+    assert bolded(line) == line

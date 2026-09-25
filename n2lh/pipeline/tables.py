@@ -55,11 +55,24 @@ def _row_coverage(dark: Image.Image) -> List[float]:
 
 
 def find_table_band(dark: Image.Image) -> Optional[Tuple[int, int]]:
-    """Top and bottom of the page's ruled table, or None if it has none."""
+    """Top and bottom of the page's biggest ruled table, or None if it has none."""
+    bands = find_table_bands(dark)
+    if not bands:
+        return None
+    return max(bands, key=lambda b: b[2])[:2]
+
+
+def find_table_bands(dark: Image.Image, min_rules: int = _MIN_RULES
+                     ) -> List[Tuple[int, int, int]]:
+    """Every ruled table on the page as ``(top, bottom, n_rules)``.
+
+    A page can hold more than one table, and a page cut into strips must keep
+    each of them whole, not only the biggest.
+    """
     coverage = _row_coverage(dark)
     inked = [y for y, c in enumerate(coverage) if c >= _RULE_COVERAGE]
     if not inked:
-        return None
+        return []
 
     # A drawn line is several pixel rows thick, so collapse touching rows into
     # one rule first. Counting pixel rows instead would let a single thick
@@ -81,12 +94,9 @@ def find_table_band(dark: Image.Image) -> Optional[Tuple[int, int]]:
         else:
             groups.append([rule])
 
-    biggest = max(groups, key=len)
-    if len(biggest) < _MIN_RULES:
-        return None
-    biggest = [biggest[0][0], biggest[-1][1]]
     pad = int(dark.size[1] * _PAD_FRAC)
-    return max(0, biggest[0] - pad), min(dark.size[1], biggest[-1] + pad)
+    return [(max(0, g[0][0] - pad), min(dark.size[1], g[-1][1] + pad), len(g))
+            for g in groups if len(g) >= min_rules]
 
 
 def crop_band(page: Image.Image, band: Tuple[int, int], dest: Path) -> Path:
