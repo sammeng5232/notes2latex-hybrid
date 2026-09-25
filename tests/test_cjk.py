@@ -158,3 +158,12 @@ def test_pdflatex_really_cannot_do_it(tmp_path):
     result = LatexCompiler(engine="pdflatex", timeout=300).compile(tex, tmp_path / "pdf")
     assert not result.ok
     assert any("Unicode character" in str(e) for e in result.errors)
+
+
+def test_circled_numbers_are_set_in_the_chinese_font():
+    """In the Latin font they have no glyph and vanished from the PDF."""
+    from n2lh.pipeline.cjk import add_cjk
+    pre = add_cjk("\\documentclass{article}\n\\begin{document}\n")
+    assert '\\xeCJKDeclareCharClass{CJK}{"2460 -> "24FF}' in pre
+    assert "\\ifdefined\\xeCJKDeclareCharClass" in pre    # harmless under LuaLaTeX
+

@@ -74,17 +74,39 @@ _BEGIN = re.compile(r"\\begin\{([A-Za-z*]+)\}")
 _END = re.compile(r"\\end\{([A-Za-z*]+)\}")
 
 
-def _display_math_depth(line: str, depth: int) -> int:
-    """Track `\\[ ... \\]` / `$$ ... $$` spanning several lines."""
-    for m in re.finditer(r"\\\[|\\\]|\$\$", line):
-        token = m.group(0)
-        if token == "$$":
-            depth = 0 if depth else 1
-        elif token == "\\[":
-            depth += 1
-        else:
-            depth = max(0, depth - 1)
+def display_math_depth(line: str, depth: int) -> int:
+    """Track `\\[ ... \\]` / `$$ ... $$` spanning several lines.
+
+    Scanned character by character, following inline math: `$\\big($$f$` is
+    two inline formulas side by side, not a `$$` display (counted as one, it
+    made every later line of a real page look like display math, so nothing
+    after it was bolded or split into paragraphs), and `\\\\[2pt]` is a line
+    break with spacing, not `\\[`.
+    """
+    inline = False
+    i, n = 0, len(line)
+    while i < n:
+        c = line[i]
+        if c == "\\":
+            nxt = line[i + 1] if i + 1 < n else ""
+            if not inline and nxt == "[":
+                depth += 1
+            elif not inline and nxt == "]":
+                depth = max(0, depth - 1)
+            i += 2                  # an escaped character, \\ included, is skipped whole
+            continue
+        if c == "$":
+            if not inline and line.startswith("$$", i):
+                depth = 0 if depth else 1
+                i += 2
+                continue
+            if depth == 0:
+                inline = not inline
+        i += 1
     return depth
+
+
+_display_math_depth = display_math_depth
 
 
 _INLINE_MATH = re.compile(r"(\$[^$]*\$)")

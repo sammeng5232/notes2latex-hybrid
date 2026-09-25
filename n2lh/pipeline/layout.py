@@ -84,6 +84,35 @@ def fit_wide_tables(latex: str) -> Tuple[str, int]:
     return "".join(out), n
 
 
+# A margin section label as written by a strip read: \textbf{② 测度}, possibly
+# colored. Between it and a Chinese word the space vanishes (xeCJK drops spaces
+# next to CJK), so "② 测度 定理 2.1" printed as "测度定理 2.1".
+_MARGIN_LABEL = re.compile(
+    r"((?:\\textcolor\{\w+\}\{)?\\textbf\{[\u2460-\u2473\u24f5-\u24fe][^{}\n]{0,12}\}\}?)"
+    r"[ \t]+(?=\S)")
+# Text directly above a tabular inside a wraptable, with no break between: the
+# heading was set BESIDE the table instead of above it.
+_WRAP_HEADING = re.compile(
+    r"(\\begin\{wraptable\}\{[^}]*\}\{[^}]*\}[ \t]*\n)([^\n]*\S)[ \t]*\n"
+    r"(?=[ \t]*(?:\\fitpage\{)?\\begin\{tabular\})")
+
+
+def space_margin_labels(latex: str) -> Tuple[str, int]:
+    """Put a gap between a margin section label and the text after it."""
+    return _MARGIN_LABEL.subn(lambda m: m.group(1) + "\\quad ", latex)
+
+
+def heading_above_corner_table(latex: str) -> Tuple[str, int]:
+    """End a wraptable's heading line before its tabular starts."""
+    def fix(m: "re.Match[str]") -> str:
+        heading = m.group(2)
+        if heading.rstrip().endswith(("\\\\", "\\par")):
+            return m.group(0)
+        return m.group(1) + heading + "\\par\n"
+    out, n = _WRAP_HEADING.subn(fix, latex)
+    return out, (n if out != latex else 0)
+
+
 def tidy_layout(latex: str) -> Tuple[str, List[str]]:
     """Both passes. Returns ``(latex, changes)``; ``changes`` is empty when clean."""
     changes: List[str] = []
@@ -93,4 +122,10 @@ def tidy_layout(latex: str) -> Tuple[str, List[str]]:
     latex, n_fit = fit_wide_tables(latex)
     if n_fit:
         changes.append(f"fitted {n_fit} table(s) to the text width")
+    latex, n_gap = space_margin_labels(latex)
+    if n_gap:
+        changes.append(f"spaced {n_gap} margin label(s)")
+    latex, n_head = heading_above_corner_table(latex)
+    if n_head:
+        changes.append("put the corner table's heading above it")
     return latex, changes

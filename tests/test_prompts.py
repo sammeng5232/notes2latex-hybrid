@@ -183,3 +183,12 @@ def test_a_strip_prompt_limits_the_model_to_what_the_strip_shows():
     assert "COLORED INK IS PRESENT ON THIS STRIP" in first
     assert "strip 4 of 6" in later and "tail" not in later and "itemize" not in later
     assert "Do not add a title" in later and "ONE mark" in later
+
+
+def test_ink_colors_are_pen_shades_not_screen_primaries():
+    """xcolor's pink is a pale tint: a pink glossary came out nearly invisible."""
+    from n2lh.recognition.prompts import PREAMBLE_TEX
+    for name in ("pink", "green", "cyan", "yellow"):
+        assert "\\definecolor{" + name + "}" in PREAMBLE_TEX
+    assert PREAMBLE_TEX.index("\\usepackage{xcolor}") < PREAMBLE_TEX.index("\\definecolor{pink}")
+

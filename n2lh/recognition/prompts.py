@@ -14,6 +14,15 @@ _PREAMBLE_TEMPLATE = r"""\documentclass[__CLASSOPTS__]{article}
                         % \mathbb{1} silently renders as the symbol \nVdash
 \usepackage{cancel}
 \usepackage{xcolor}
+% Pen-like shades for the color names used for ink: xcolor's own pink is a pale
+% tint (a pink glossary came out nearly invisible) and its green, cyan and yellow
+% are screen primaries that do not read on white paper.
+\definecolor{pink}{RGB}{214,51,160}
+\definecolor{magenta}{RGB}{200,40,170}
+\definecolor{green}{RGB}{30,140,60}
+\definecolor{cyan}{RGB}{0,140,180}
+\definecolor{yellow}{RGB}{190,150,0}
+\definecolor{blue}{RGB}{30,70,200}
 \usepackage{graphicx}   % hand-drawn figures cropped from the page image
 \usepackage{wrapfig}    % corner tables float beside the body text, as on the page
 % Figures live in <output>/figures. Per-page compiles run one or two levels deeper

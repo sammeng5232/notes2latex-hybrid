@@ -26,7 +26,10 @@ _CJK = re.compile(
     "가-힯豈-﫿︰-﹏＀-￯]")
 
 # ctex loads a CJK font and the punctuation/spacing rules that go with it.
-CJK_PACKAGE = "\\usepackage[UTF8]{ctex}   % Chinese: needs XeLaTeX or LuaLaTeX"
+CJK_PACKAGE = ("\\usepackage[UTF8]{ctex}   % Chinese: needs XeLaTeX or LuaLaTeX\n"
+               "% Circled numbers (section marks like \u2460) from the Chinese font: the\n"
+               "% Latin one has no glyph for them and they vanished from the PDF.\n"
+               "\\ifdefined\\xeCJKDeclareCharClass\\xeCJKDeclareCharClass{CJK}{\"2460 -> \"24FF}\\fi")
 CJK_ENGINES = ("xelatex", "lualatex")
 
 

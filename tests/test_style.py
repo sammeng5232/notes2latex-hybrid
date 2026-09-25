@@ -142,3 +142,25 @@ def test_an_unnumbered_or_math_label_is_left_alone(line):
 def test_a_chinese_label_the_model_already_bolded_is_not_bolded_twice():
     line = r"\textbf{定理 6.16 (Bessel-Fischer)} 在 $L^2$ 中"
     assert bolded(line) == line
+
+
+# ------------------------------------------------ display math, followed exactly
+def test_two_inline_formulas_side_by_side_are_not_a_display():
+    """`$\big($$f$` on a real page made every later line look like display math,
+    so nothing after it was bolded."""
+    from n2lh.pipeline.style import display_math_depth
+    assert display_math_depth(r"定理 5.12. $\big($$f$在$[a,b]$上 $\big)$.", 0) == 0
+    src = "\\textbf{定理 5.12.} $\\big($$f$ a.e.$\\big)$.\n定理 5.13 (FTC). 绝对连续.\n"
+    out, _ = bold_labels(src)
+    assert "\\textbf{定理 5.13 (FTC).}" in out
+
+
+def test_real_displays_and_spaced_breaks_are_still_tracked():
+    from n2lh.pipeline.style import display_math_depth
+    assert display_math_depth("$$", 0) == 1
+    assert display_math_depth("$$", 1) == 0
+    assert display_math_depth("$$ x = 1 $$", 0) == 0
+    assert display_math_depth(r"\[", 0) == 1
+    assert display_math_depth(r"a \\[2pt] b", 0) == 0
+    assert display_math_depth(r"cost \$5 and $x$", 0) == 0
+

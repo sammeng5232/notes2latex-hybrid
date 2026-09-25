@@ -254,3 +254,9 @@ def test_figure_coordinates_read_from_a_padded_strip_map_back_onto_it():
 def test_tidy_strip_remaps_figures_and_splits_lines():
     out = tidy_strip("a\nb \\figbox{0}{0}{1000}{1000}", Strip(2, 500, 1000), 1000)
     assert out == "a\n\nb \\figbox{0}{500}{1000}{1000}"
+
+
+def test_adjacent_inline_formulas_do_not_stop_the_paragraph_split():
+    src = "定理 5.12. $\\big($$f$ 连续$\\big)$.\n定理 5.13 (FTC). x\n定理 5.14. y"
+    assert lines_as_paragraphs(src).count("\n\n") == 2
+

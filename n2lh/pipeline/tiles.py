@@ -243,8 +243,6 @@ def _merge_seam_figures(parts: List[str], strips: Sequence[Strip], page_height: 
 
 # ------------------------------------------------------------- line structure
 _ENV = re.compile(r"\\(begin|end)\{([A-Za-z*]+)\}")
-_OPEN_DISPLAY = re.compile(r"(?<!\\)\\\[")
-_CLOSE_DISPLAY = re.compile(r"(?<!\\)\\\]")
 
 
 def lines_as_paragraphs(latex: str) -> str:
@@ -256,23 +254,20 @@ def lines_as_paragraphs(latex: str) -> str:
     a display, a list) and after an explicit ``\\\\`` a newline means something
     else and is left alone.
     """
+    from n2lh.pipeline.style import display_math_depth
+
     out: List[str] = []
     depth = 0              # environment nesting
-    bracket = 0            # \[ ... \] nesting
-    dollars = False        # inside $$ ... $$
+    display = 0            # \[ ... \] or $$ ... $$ open
     lines = latex.split("\n")
     for i, line in enumerate(lines):
         out.append(line)
         for m in _ENV.finditer(line):
             depth = max(0, depth + (1 if m.group(1) == "begin" else -1))
-        # `\\[2pt]` is a line break with spacing, not display math.
-        bracket = max(0, bracket + len(_OPEN_DISPLAY.findall(line))
-                      - len(_CLOSE_DISPLAY.findall(line)))
-        if line.count("$$") % 2:
-            dollars = not dollars
+        display = display_math_depth(line, display)
         nxt = lines[i + 1] if i + 1 < len(lines) else None
         if (nxt is not None and line.strip() and nxt.strip()
-                and depth == 0 and bracket == 0 and not dollars
+                and depth == 0 and display == 0
                 and not line.rstrip().endswith("\\\\")
                 and not nxt.lstrip().startswith(("\\end", "\\item", "&", "\\\\"))):
             out.append("")

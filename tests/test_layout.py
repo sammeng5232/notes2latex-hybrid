@@ -149,3 +149,24 @@ def test_a_table_that_already_fits_is_not_shrunk(tmp_path):
     assert abs(width_of(table) - width_of(fit_wide_tables(table)[0])) <= 2
 
 
+# --------------------------------------------------- margin labels, corner tables
+def test_a_margin_label_is_set_apart_from_the_text_after_it():
+    """xeCJK drops a space next to Chinese: "② 测度 定理 2.1" printed as
+    "测度定理 2.1"."""
+    from n2lh.pipeline.layout import space_margin_labels
+    out, n = space_margin_labels("\\textcolor{green}{\\textbf{② 测度}} 定理 2.1. x\n"
+                                 "\\textbf{定理 2.4} y")
+    assert n == 1
+    assert out.startswith("\\textcolor{green}{\\textbf{② 测度}}\\quad 定理 2.1.")
+    assert "\\textbf{定理 2.4} y" in out
+
+
+def test_a_corner_tables_heading_goes_above_it_not_beside_it():
+    from n2lh.pipeline.layout import heading_above_corner_table
+    src = ("\\begin{wraptable}{r}{0.42\\textwidth}\n"
+           "\\textcolor{pink}{\\underline{中英词汇对照表}}\n"
+           "\\fitpage{\\begin{tabular}{ll}\na & b \\\\\n\\end{tabular}}\n\\end{wraptable}")
+    out, n = heading_above_corner_table(src)
+    assert n == 1 and "中英词汇对照表}}\\par\n\\fitpage{" in out
+    assert heading_above_corner_table(out) == (out, 0)
+
