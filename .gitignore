@@ -29,3 +29,38 @@ dist/*
 *.fls
 *.fdb_latexmk
 *.synctex.gz
+
+# Added 2026-09-28 after a `git add .` audit: secrets, local data and build output
+# Local state wherever it lands: GUI-from-source writes .n2lh-dev/ (settings.json = API key,
+# jobs, logs); `serve --data-dir data` is cwd-relative.
+.n2lh-dev/
+**/settings.json
+**/jobs/
+logs/
+*.pfx
+*.p12
+*.pem
+*.key
+*.jks
+*.keystore
+.env.*
+*.env
+!.env.example
+*.cer
+*.crt
+pfx_password*
+# PyInstaller work/dist subfolders under build/ (tracked build files are top-level only)
+build/*/
+# User inputs/outputs dropped at the root
+/*.pdf
+/*.png
+/*.jpg
+/*.jpeg
+.coverage
+htmlcov/
+.idea/
+.vscode/
+Thumbs.db
+desktop.ini
+*.part
+*.tmp
